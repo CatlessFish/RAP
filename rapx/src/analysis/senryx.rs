@@ -60,7 +60,7 @@ impl<'tcx> SenryxCheck<'tcx> {
         if annotation_results.len() == 0 {
             return;
         }
-        Self::show_annotate_results(def_id, annotation_results);
+        Self::show_annotate_results(self.tcx, def_id, annotation_results);
     }
 
     // pub fn body_visit_and_check(&self, def_id: DefId) -> Vec<CheckResult> {
@@ -90,7 +90,7 @@ impl<'tcx> SenryxCheck<'tcx> {
             let func_cons = uig_checker.search_constructor(def_id);
             for func_con in func_cons {
                 if UnsafetyIsolationCheck::check_safety(self.tcx, func_con) {
-                    Self::show_annotate_results(func_con, self.get_annotation(def_id));
+                    Self::show_annotate_results(self.tcx, func_con, self.get_annotation(def_id));
                     // uphold safety to unsafe constructor
                 }
             }
@@ -119,8 +119,8 @@ impl<'tcx> SenryxCheck<'tcx> {
                 } => match func {
                     Operand::Constant(c) => match c.ty().kind() {
                         ty::FnDef(id, ..) => {
-                            if UigUnit::get_sp(*id).len() > 0 {
-                                results.extend(UigUnit::get_sp(*id));
+                            if UigUnit::get_sp(self.tcx, *id).len() > 0 {
+                                results.extend(UigUnit::get_sp(self.tcx, *id));
                             } else {
                                 results.extend(self.get_annotation(*id));
                             }
@@ -135,10 +135,10 @@ impl<'tcx> SenryxCheck<'tcx> {
         results
     }
 
-    pub fn show_check_results(def_id: DefId, check_results: Vec<CheckResult>) {
+    pub fn show_check_results(tcx: TyCtxt<'tcx>, def_id: DefId, check_results: Vec<CheckResult>) {
         rap_info!(
             "--------In safe function {:?}---------",
-            UigUnit::get_cleaned_def_path_name(def_id)
+            UigUnit::get_cleaned_def_path_name(tcx, def_id)
         );
         for check_result in check_results {
             rap_info!(
@@ -153,10 +153,14 @@ impl<'tcx> SenryxCheck<'tcx> {
         }
     }
 
-    pub fn show_annotate_results(def_id: DefId, annotation_results: HashSet<String>) {
+    pub fn show_annotate_results(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        annotation_results: HashSet<String>,
+    ) {
         rap_info!(
             "--------In unsafe function {:?}---------",
-            UigUnit::get_cleaned_def_path_name(def_id)
+            UigUnit::get_cleaned_def_path_name(tcx, def_id)
         );
         rap_warn!("Lack safety annotations: {:?}.", annotation_results);
     }

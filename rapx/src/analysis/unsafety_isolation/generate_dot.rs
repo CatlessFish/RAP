@@ -3,6 +3,7 @@ use petgraph::dot::{Config, Dot};
 use petgraph::graph::{DiGraph, EdgeReference, NodeIndex};
 use petgraph::Graph;
 use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
 use std::collections::HashSet;
 use std::fmt::{self, Write};
 
@@ -135,21 +136,21 @@ impl UigUnit {
         dot_str
     }
 
-    pub fn compare_labels(&self) {
-        let mut caller_sp = Self::get_sp(self.caller.0);
-        for caller_con in &self.caller_cons {
-            if caller_con.1 != true {
-                // if constructor is safe, it won't have labels.
-                continue;
-            }
-            let caller_con_sp = Self::get_sp(caller_con.0);
-            caller_sp.extend(caller_con_sp); // Merge sp of each unsafe constructor
-        }
+    pub fn compare_labels(&self, tcx: TyCtxt<'_>) {
+        let caller_sp = Self::get_sp(tcx, self.caller.0);
+        // for caller_con in &self.caller_cons {
+        //     if caller_con.1 != true {
+        //         // if constructor is safe, it won't have labels.
+        //         continue;
+        //     }
+        //     let caller_con_sp = Self::get_sp(caller_con.0);
+        //     caller_sp.extend(caller_con_sp); // Merge sp of each unsafe constructor
+        // }
         let caller_label: Vec<_> = caller_sp.clone().into_iter().collect();
 
         let mut combined_callee_sp = HashSet::new();
         for (callee, _sp_vec) in &self.callee_cons_pair {
-            let callee_sp = Self::get_sp(callee.0);
+            let callee_sp = Self::get_sp(tcx, callee.0);
             combined_callee_sp.extend(callee_sp); // Merge sp of each callee
         }
         let combined_labels: Vec<_> = combined_callee_sp.clone().into_iter().collect();
@@ -177,10 +178,10 @@ impl UigUnit {
             println!("----------unmatched sp------------");
             println!(
                 "Caller: {:?}.\n--Caller's constructors: {:?}.\n--SP labels: {:?}.",
-                Self::get_cleaned_def_path_name(self.caller.0),
+                Self::get_cleaned_def_path_name(tcx, self.caller.0),
                 self.caller_cons
                     .iter()
-                    .map(|node_type| Self::get_cleaned_def_path_name(node_type.0))
+                    .map(|node_type| Self::get_cleaned_def_path_name(tcx, node_type.0))
                     .collect::<Vec<_>>(),
                 caller_label
             );
@@ -188,18 +189,18 @@ impl UigUnit {
                 "Callee: {:?}.\n--Combined Callee Labels: {:?}",
                 self.callee_cons_pair
                     .iter()
-                    .map(|(node_type, _)| Self::get_cleaned_def_path_name(node_type.0))
+                    .map(|(node_type, _)| Self::get_cleaned_def_path_name(tcx, node_type.0))
                     .collect::<Vec<_>>(),
                 combined_labels
             );
         }
     }
 
-    pub fn get_cleaned_def_path_name(def_id: DefId) -> String {
+    pub fn get_cleaned_def_path_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
         let def_id_str = format!("{:?}", def_id);
         let mut parts: Vec<&str> = def_id_str
             .split("::")
-            .filter(|part| !part.contains("{")) // 去除包含 "{" 的部分
+            // .filter(|part| !part.contains("{")) // 去除包含 "{" 的部分
             .collect();
 
         let mut remove_first = false;
@@ -217,7 +218,26 @@ impl UigUnit {
         if remove_first && !parts.is_empty() {
             parts.remove(0);
         }
-        let mut cleaned_path = parts.join("::");
+
+        let new_parts: Vec<String> = parts
+            .into_iter()
+            .filter_map(|s| {
+                if s.contains("{") {
+                    if remove_first {
+                        match Self::get_struct_name(tcx, def_id) {
+                            Some(name) => Some(name),
+                            None => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(s.to_string())
+                }
+            })
+            .collect();
+
+        let mut cleaned_path = new_parts.join("::");
         cleaned_path = cleaned_path.trim_end_matches(')').to_string();
         cleaned_path
     }
@@ -229,8 +249,8 @@ impl UigUnit {
         json_data
     }
 
-    pub fn get_sp(def_id: DefId) -> HashSet<String> {
-        let cleaned_path_name = Self::get_cleaned_def_path_name(def_id);
+    pub fn get_sp(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<String> {
+        let cleaned_path_name = Self::get_cleaned_def_path_name(tcx, def_id);
         let json_data: serde_json::Value = Self::get_sp_json();
 
         if let Some(function_info) = json_data.get(&cleaned_path_name) {
@@ -247,6 +267,26 @@ impl UigUnit {
             }
         }
         HashSet::new()
+    }
+
+    pub fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
+        if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
+            if let Some(impl_id) = assoc_item.impl_container(tcx) {
+                let ty = tcx.type_of(impl_id).skip_binder();
+                let type_name = ty.to_string();
+                let struct_name = type_name
+                    .split('<')
+                    .next()
+                    .unwrap_or("")
+                    .split("::")
+                    .last()
+                    .unwrap_or("")
+                    .to_string();
+
+                return Some(struct_name);
+            }
+        }
+        None
     }
 }
 

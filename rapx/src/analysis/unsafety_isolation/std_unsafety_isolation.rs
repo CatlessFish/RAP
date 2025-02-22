@@ -21,7 +21,7 @@ impl<'tcx> UnsafetyIsolationCheck<'tcx> {
         let mut dot_strs = Vec::new();
         for uig in &self.uigs {
             let dot_str = uig.generate_dot_str();
-            uig.compare_labels();
+            // uig.compare_labels(self.tcx);
             dot_strs.push(dot_str);
         }
         for uig in &self.single {
@@ -75,6 +75,9 @@ impl<'tcx> UnsafetyIsolationCheck<'tcx> {
                 if Self::check_safety(tcx, def_id)
                     && self.tcx.visibility(def_id) == Visibility::Public
                 {
+                    // if UigUnit::get_sp(tcx, def_id).len() == 0 {
+                    //     println!("name : {:?}", UigUnit::get_cleaned_def_path_name(tcx, def_id));
+                    // }
                     unsafe_fn.insert(def_id);
                     self.insert_uig(
                         def_id,
@@ -141,7 +144,22 @@ impl<'tcx> UnsafetyIsolationCheck<'tcx> {
 
     pub fn filter_mir(def_id: DefId) -> bool {
         let def_id_fmt = format!("{:?}", def_id);
-        def_id_fmt.contains("core_arch") || def_id_fmt.contains("::__")
+        def_id_fmt.contains("core_arch")
+            || def_id_fmt.contains("::__")
+            || def_id_fmt.contains("backtrace_rs")
+            || def_id_fmt.contains("stack_overflow")
+            || def_id_fmt.contains("thread_local")
+            || def_id_fmt.contains("raw_vec")
+            || def_id_fmt.contains("sys_common")
+            || def_id_fmt.contains("adapters")
+            || def_id_fmt.contains("sys::sync")
+            || def_id_fmt.contains("personality")
+            || def_id_fmt.contains("collections::btree::borrow")
+            || def_id_fmt.contains("num::int_sqrt")
+            || def_id_fmt.contains("collections::btree::node")
+            || def_id_fmt.contains("collections::btree::navigate")
+            || def_id_fmt.contains("core_simd")
+            || def_id_fmt.contains("unique")
     }
 
     pub fn insert_uig(

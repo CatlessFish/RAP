@@ -56,6 +56,7 @@ fn main() {
             "-adt" => {}
             "-z3" => {}
             "-meta" => {}
+            "-dev" => {}
             _ => args.push(arg),
         }
     }

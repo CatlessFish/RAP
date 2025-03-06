@@ -6,3 +6,4 @@ pub mod safedrop;
 pub mod senryx;
 pub mod unsafety_isolation;
 pub mod utils;
+pub mod deadlock;

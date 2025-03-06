@@ -35,6 +35,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_middle::util::Providers;
 use rustc_session::search_paths::PathKind;
 use std::path::PathBuf;
+use crate::analysis::deadlock::DeadlockDetection;
 
 // Insert rustc arguments at the beginning of the argument list that RAP wants to be
 // set per default, for maximal validation power.
@@ -270,4 +271,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
     if callback.is_opt_enabled() {
         Opt::new(tcx).start();
     }
+
+    // if
+    DeadlockDetection::new(tcx).start();
 }

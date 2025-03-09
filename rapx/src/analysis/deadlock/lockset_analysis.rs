@@ -1,41 +1,78 @@
+use std::collections::HashMap;
 use rustc_hir::def_id::DefId;
 use rustc_hir::def::DefKind;
+use rustc_middle::hir::ModuleItems;
 use rustc_middle::ty::{Interner, Ty, TyCtxt, TyKind};
-
+use rustc_middle::mir::{Body};
+use rustc_span::def_id::LocalDefId;
+use rustc_span::Symbol;
 use crate::analysis::deadlock::*;
 use crate::{rap_info, rap_debug};
-// use crate::utils::source::get_fn_name;
 
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn lockset_analysis(&self) {
-
-        // Filter Static
-        for local_def_id in self.tcx.iter_local_def_id() {
-            let def_id = local_def_id.to_def_id();
-            if let DefKind::Static { safety: _, nested: _, mutability: _ } = self.tcx.def_kind(def_id) {
-                // rap_debug!("[Static] {}", self.tcx.def_path_str(def_id));
-            }
-        }
-
-        // Filter any certain type
+        // Steps:
+        // 1. Collect all locks that we're interested in
+        // Filter by type
         let target_types = [
             vec!["sync::mutex::Mutex"],
             vec!["sync::rwlock::RwLock"],
             vec!["sync::rwmutex::RwMutex"],
             vec!["sync::spin::SpinLock"],
         ];
+
+        // Lock struct type and corresponding DefId
+        // let mut lock_ty = HashMap::new();
+
         for var_def_id in self.tcx.hir().body_owners() {
-            let var_ty = self.tcx.type_of(var_def_id.to_def_id()).instantiate_identity();
-            for target_type in target_types.iter() {
-                if match_target_type(var_ty, target_type, self.tcx) {
-                    rap_info!("Found {} type {}", var_ty.to_string(), self.tcx.def_path_str(var_def_id.to_def_id()))
+            let def_id = var_def_id.to_def_id();
+
+            // Filter the (const/static ?) Locks
+            // let var_ty = self.tcx.type_of(def_id).instantiate_identity();
+            // for target_type in target_types.iter() {
+            //     if match_target_type(var_ty, target_type, self.tcx) {
+            //         rap_info!("[LOCK] Found {} type {}", var_ty.to_string(), self.tcx.def_path_str(def_id));
+            //     }
+            // }
+
+            // rap_info!("{:?}", self.tcx.def_path_str(def_id)); // eg. "<sync::rwlock::RwLockUpgradeableGuard_<T, R> as core::ops::Drop>::drop"
+            //def_kind
+            // rap_info!("DefId {:?} | Path {:?} | Type {:?}", def_id, self.tcx.hir().def_path(var_def_id).to_string_no_crate_verbose(), self.tcx.type_of(def_id).instantiate_identity()); // eg. "::sync::rwlock::{impl#22}::drop"
+        }
+
+        // Find Lock Struct definitions
+        for local_def_id in self.tcx.hir_crate_items(()).definitions() {
+            // rap_debug!("{:?}", local_def_id);
+            let def_id: DefId =  local_def_id.to_def_id();
+            if let DefKind::Struct = self.tcx.def_kind(def_id) {
+                let struct_name = self.tcx.def_path_str(def_id);
+                if target_types.contains(&vec![struct_name.as_str()]) {
+                    rap_info!("{:?} | {:?}", struct_name, self.tcx.def_span(def_id));
                 }
             }
         }
 
-        // Steps:
-        // 1. Collect all locks that we're interested in
+        // Filter the usage (local decl) in each function body
+        // for var_def_id in self.tcx.hir().body_owners() {
+        //     let def_id = var_def_id.to_def_id();
+        //
+        //     /* filter const mir */
+        //     if let Some(_other) = self.tcx.hir().body_const_context(def_id.expect_local()) {
+        //         continue;
+        //     }
+        //
+        //     if self.tcx.is_mir_available(def_id) {
+        //         let body: Body = self.tcx.optimized_mir(def_id).clone();
+        //         for local in body.local_decls {
+        //             let local_ty = local.ty;
+        //             if lock_ty.contains_key(&local_ty) {
+        //                 rap_info!("[USE] FOUND LOCAL {:?} OF TYPE {} IN DEF {}", local.source_info, local_ty.to_string(), self.tcx.def_path_str(def_id));
+        //             }
+        //         }
+        //     }
+        // }
+
 
         // 2. Collect all the Lock / Unlock APIs that we're interested in
 

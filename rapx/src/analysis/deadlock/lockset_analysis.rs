@@ -3,7 +3,7 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::def::DefKind;
 use rustc_middle::hir::ModuleItems;
 use rustc_middle::ty::{Interner, Ty, TyCtxt, TyKind};
-use rustc_middle::mir::{Body};
+use rustc_middle::mir::{Body, TerminatorKind};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::Symbol;
 use crate::analysis::deadlock::*;
@@ -22,22 +22,19 @@ impl<'tcx> DeadlockDetection<'tcx> {
             vec!["sync::spin::SpinLock"],
         ];
 
-        // Lock struct type and corresponding DefId
-        // let mut lock_ty = HashMap::new();
 
         for var_def_id in self.tcx.hir().body_owners() {
             let def_id = var_def_id.to_def_id();
 
-            // Filter the (const/static ?) Locks
-            // let var_ty = self.tcx.type_of(def_id).instantiate_identity();
-            // for target_type in target_types.iter() {
-            //     if match_target_type(var_ty, target_type, self.tcx) {
-            //         rap_info!("[LOCK] Found {} type {}", var_ty.to_string(), self.tcx.def_path_str(def_id));
-            //     }
-            // }
+            // Filter the (const/static ?) Lock Objects
+            let var_ty = self.tcx.type_of(def_id).instantiate_identity();
+            for target_type in target_types.iter() {
+                if match_target_type(var_ty, target_type, self.tcx) {
+                    rap_debug!("Lock Object {} of type {} | {:?}", self.tcx.def_path_str(def_id), var_ty.to_string(), self.tcx.def_span(def_id));
+                }
+            }
 
             // rap_info!("{:?}", self.tcx.def_path_str(def_id)); // eg. "<sync::rwlock::RwLockUpgradeableGuard_<T, R> as core::ops::Drop>::drop"
-            //def_kind
             // rap_info!("DefId {:?} | Path {:?} | Type {:?}", def_id, self.tcx.hir().def_path(var_def_id).to_string_no_crate_verbose(), self.tcx.type_of(def_id).instantiate_identity()); // eg. "::sync::rwlock::{impl#22}::drop"
         }
 
@@ -48,33 +45,89 @@ impl<'tcx> DeadlockDetection<'tcx> {
             if let DefKind::Struct = self.tcx.def_kind(def_id) {
                 let struct_name = self.tcx.def_path_str(def_id);
                 if target_types.contains(&vec![struct_name.as_str()]) {
-                    rap_info!("{:?} | {:?}", struct_name, self.tcx.def_span(def_id));
+                    rap_debug!("{:?} | {:?}", struct_name, self.tcx.def_span(def_id));
                 }
             }
         }
 
         // Filter the usage (local decl) in each function body
-        // for var_def_id in self.tcx.hir().body_owners() {
-        //     let def_id = var_def_id.to_def_id();
-        //
-        //     /* filter const mir */
-        //     if let Some(_other) = self.tcx.hir().body_const_context(def_id.expect_local()) {
-        //         continue;
-        //     }
-        //
-        //     if self.tcx.is_mir_available(def_id) {
-        //         let body: Body = self.tcx.optimized_mir(def_id).clone();
-        //         for local in body.local_decls {
-        //             let local_ty = local.ty;
-        //             if lock_ty.contains_key(&local_ty) {
-        //                 rap_info!("[USE] FOUND LOCAL {:?} OF TYPE {} IN DEF {}", local.source_info, local_ty.to_string(), self.tcx.def_path_str(def_id));
-        //             }
-        //         }
-        //     }
-        // }
+        for var_def_id in self.tcx.hir().body_owners() {
+            let def_id = var_def_id.to_def_id(); // The function body def_id
+
+            /* filter const mir */
+            if let Some(_other) = self.tcx.hir().body_const_context(def_id.expect_local()) {
+                continue;
+            }
+
+            if self.tcx.is_mir_available(def_id) {
+                let body: Body = self.tcx.optimized_mir(def_id).clone();
+                for local in body.local_decls {
+                    let local_ty = local.ty;
+                    for target_type in target_types.iter() {
+                        if match_target_type(local_ty, target_type, self.tcx) {
+                            rap_debug!("Local Variable of type {} in function {} | {:?}", local_ty.to_string(), self.tcx.def_path_str(def_id), local.source_info.span);
+                            // Mark these functions for future analysis
+                        }
+                    }
+                }
+            }
+        }
 
 
         // 2. Collect all the Lock / Unlock APIs that we're interested in
+        let target_lock_apis = ["sync::spin::SpinLock::<T, G>::lock"];
+        let mut lock_apis: HashMap<DefId, String> = HashMap::new();
+
+        // Find lock / unlock api definitions
+        for var_def_id in self.tcx.hir().body_owners() {
+            let def_id = var_def_id.to_def_id(); // The function body def_id
+            match self.tcx.def_kind(def_id) {
+                DefKind::AssocFn => {
+                    let fn_name = self.tcx.def_path_str(def_id);
+                    // if is_lock_unlock_api
+                    if target_lock_apis.contains(&fn_name.as_str()) {
+                        rap_info!("Lock API {:?}", fn_name);
+                        lock_apis.insert(def_id, fn_name);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for var_def_id in self.tcx.hir().body_owners() {
+            let def_id = var_def_id.to_def_id(); // The function body def_id
+
+            /* filter const mir */
+            if let Some(_other) = self.tcx.hir().body_const_context(def_id.expect_local()) {
+                continue;
+            }
+
+            if self.tcx.is_mir_available(def_id) {
+                let body: Body = self.tcx.optimized_mir(def_id).clone();
+                for bb in body.basic_blocks.iter() {
+                    let terminator = bb.terminator();
+                    match terminator.kind {
+                        TerminatorKind::Call {
+                            ref func,
+                            ref args,
+                            destination: _,
+                            target: _,
+                            unwind: _,
+                            call_source: _,
+                            ref fn_span,
+                        } => {
+                            if let Some((callee_def_id, _)) = func.const_fn_def() {
+                                rap_debug!("Calling function {:?} | {:?}", self.tcx.def_path_str(callee_def_id), terminator.source_info.span);
+                                if lock_apis.contains_key(&callee_def_id) {
+                                    rap_info!("Calling lock API {:?} in function {:?} | {:?}", self.tcx.def_path_str(callee_def_id), self.tcx.def_path_str(def_id), terminator.source_info.span);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         // 3. Conduct Intra-procedure analysis, calculate lockset for each function
 

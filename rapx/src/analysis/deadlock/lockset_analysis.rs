@@ -31,7 +31,7 @@ enum LockType {
 // 表示锁的状态
 // MayHold
 // MustHold, MustNotHold
-//
+// Bottom
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum LockState {
     Bottom,
@@ -94,18 +94,18 @@ impl LockSet {
     // 合并两个锁集（用于分支汇合点）
     // Usage: next_bb_lockstate.merge(&current_bb_lockstate)
     fn merge(&mut self, other: &LockSet) {
-        for (lock_id, state) in other.lock_states.iter() {
-            self.update_lock_state(*lock_id, state.clone());
+        for (lock_id, other_state) in other.lock_states.iter() {
+            if let Some(old_state) = self.lock_states.get_mut(lock_id) {
+                *old_state = old_state.union(other_state);
+            } else {
+                self.lock_states.insert(lock_id.clone(), other_state.clone());
+            }
         }
     }
 
     // 更新单个锁的state
     fn update_lock_state(&mut self, lock_id: DefId, state: LockState) {
-        if let Some(old_state) = self.lock_states.get_mut(&lock_id) {
-            *old_state = old_state.intersect(&state);
-        } else {
-            self.lock_states.insert(lock_id, state);
-        }
+        self.lock_states.insert(lock_id, state);
     }
 
     // 获取must_hold的锁列表
@@ -194,9 +194,9 @@ impl<'tcx> DeadlockDetection<'tcx> {
         }
         rap_debug!("完成对 {} 个函数的锁集分析", analyzed_count);
         
-        // // 4. 进行过程间分析
-        // self.interprocedural_analysis(&mut program_lock_info);
-        // rap_debug!("完成过程间锁集分析");
+        // 4. 进行过程间分析
+        self.interprocedural_analysis(&mut program_lock_info);
+        rap_debug!("完成过程间锁集分析");
         
         // 输出分析结果
         self.output_analysis_results(&program_lock_info);
@@ -206,9 +206,6 @@ impl<'tcx> DeadlockDetection<'tcx> {
     fn collect_lock_objects(&self, program_lock_info: &mut ProgramLockInfo) {
         // 从静态变量中查找锁对象
         rap_debug!("开始收集锁对象...");
-        
-        // 扫描所有模块项 - 注意使用正确的API
-        let module_items = self.tcx.hir_crate_items(());
         
         // 这里需要根据具体rustc版本选择合适的方法遍历所有项
         // 以下是一个通用方法的示例
@@ -357,6 +354,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 if let Some(terminator) = &bb.terminator {
                     match &terminator.kind {
                         TerminatorKind::Call { func, args, destination, target, .. } => {
+                            // TODO: 处理手动调用drop()的情况
                             // 处理函数调用
                             if let Some(func_def_id) = self.resolve_function_call(func) {
                                 // 更新dependency_map
@@ -406,6 +404,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                         }
                         TerminatorKind::Drop { place,target, .. } => {
                             // 处理变量销毁，可能会释放锁
+                            // TODO: 通过类型判断drop的是否真的是lockguard
                             if let Some(lock_def_id) = self.resolve_place_to_lockguard(&place, &local_guard_map, &dependency_map) {
                                 // Drop lockguard 操作会释放对应的锁
                                 rap_debug!("在函数 {} 中检测到锁 {:?} 被释放", func_name, self.tcx.def_path_str(lock_def_id));
@@ -465,8 +464,9 @@ impl<'tcx> DeadlockDetection<'tcx> {
         }
         
         program_lock_info.function_infos.insert(func_def_id, func_info.clone());
-        rap_debug!("函数 {} 锁集分析完成别名结果: {:?}，依赖关系: {:?}", func_name, local_alias_map, dependency_map);
         rap_info!("函数 {} 锁集分析完成", func_name);
+        rap_info!("Lockguard分析结果 {:?}, dependency_map: {:?}", local_guard_map, dependency_map);
+        rap_debug!("函数 {} 锁集分析完成别名结果: {:?}，依赖关系: {:?}", func_name, local_alias_map, dependency_map);
         print_bb_locksets(&func_info.bb_locksets);
     }
     
@@ -485,7 +485,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 if let Some(lock_def_id) = self.resolve_operand_to_lock_object(operand, alias_map, dependency_map, program_lock_info) {
                     alias_map.insert(place.local, lock_def_id);
                 }
-                // 更新数据依赖图，追踪嵌套在其他类型中的锁
+                // 更新数据依赖图
                 match operand {
                     Operand::Copy(r_place) | Operand::Move(r_place) => {
                         // 左边place依赖右边r_place
@@ -499,6 +499,8 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 if let Some(lock_def_id) = self.resolve_place_to_lock_object(borrowed_place, alias_map, dependency_map) {
                     alias_map.insert(place.local, lock_def_id);
                 }
+                // 更新数据依赖图
+                dependency_map.entry(place.local).or_insert(HashSet::new()).insert(borrowed_place.local);
             }
             // 处理其他类型的右值...
             _ => {}
@@ -647,6 +649,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                         post_call_lockset.merge(&callee_info.exit_lockset);
                         
                         // 更新调用者函数的基本块锁集
+                        // TODO: 更新了caller的bb
                         // 这里简化处理，实际上需要找到调用点所在的基本块和后继基本块
                         for (bb_idx, bb_lockset) in &mut caller_info.bb_locksets {
                             let old_lockset = bb_lockset.clone();
@@ -676,47 +679,26 @@ impl<'tcx> DeadlockDetection<'tcx> {
         rap_info!("发现 {} 个锁对象", program_lock_info.lock_objects.len());
         
         // 输出所有锁对象
-        // for (def_id, lock_obj) in &program_lock_info.lock_objects {
-        //     rap_info!("锁对象: {:?}, 类型: {}, 是否静态: {}", 
-        //              self.tcx.def_path_str(*def_id), 
-        //              lock_obj.lock_type, 
-        //              lock_obj.is_static);
-        // }
+        for (def_id, lock_obj) in &program_lock_info.lock_objects {
+            rap_info!("锁对象: {:?}, 类型: {}, 是否静态: {}", 
+                     self.tcx.def_path_str(*def_id), 
+                     lock_obj.lock_type, 
+                     lock_obj.is_static);
+        }
         
         // 输出每个函数的锁集
-        // for (func_def_id, func_info) in &program_lock_info.function_infos {
-        //     let func_name = self.tcx.def_path_str(*func_def_id);
-        //     rap_info!("\n函数: {}", func_name);
+        for (func_def_id, func_info) in &program_lock_info.function_infos {
+            let func_name = self.tcx.def_path_str(*func_def_id);
+            rap_info!("\n函数: {}", func_name);
             
-        //     // 输出出口锁集
-        //     rap_info!("  出口锁集:");
-        //     rap_info!("    必然持有: {}", self.format_lockset(&func_info.exit_lockset.must_hold));
-        //     rap_info!("    可能持有: {}", self.format_lockset(&func_info.exit_lockset.may_hold));
+            // 输出出口锁集
+            rap_info!("  出口锁集: {}", &func_info.exit_lockset);
             
-        //     // 输出调用点
-        //     for (callee_id, _, _) in &func_info.call_sites {
-        //         rap_info!("  调用: {}", self.tcx.def_path_str(*callee_id));
-        //     }
-        // }
-    }
-    
-    // 格式化锁集用于输出
-    fn format_lockset(&self, lockset: &HashMap<DefId, LockType>) -> String {
-        if lockset.is_empty() {
-            return "无".to_string();
+            // 输出调用点
+            for (callee_id, _, _) in &func_info.call_sites {
+                rap_info!("  调用: {}", self.tcx.def_path_str(*callee_id));
+            }
         }
-        
-        let mut result = Vec::new();
-        for (lock_id, state) in lockset {
-            let state_str = match state {
-                LockType::ReadLocked => "读锁",
-                LockType::WriteLocked => "写锁",
-                LockType::UpgradeableReadLocked => "可升级读锁",
-            };
-            result.push(format!("{}({})", self.tcx.def_path_str(*lock_id), state_str));
-        }
-        
-        result.join(", ")
     }
 }
 
@@ -724,6 +706,5 @@ impl<'tcx> DeadlockDetection<'tcx> {
 // 1. 拆分代码为数个模块
 // 2. 写一个测试库
 
-// 3. 追踪lockguard
-// 4. 追踪类似于Once<SpinLock>的情况，比如b = a.get()，a是Once<SpinLock>，b是SpinLock, 思路：data_dependency + type match
+// 3. dependency更精确的别名关系
 // 5. 追踪从参数中传进的锁，例如enable_dma_remapping()

@@ -1,5 +1,4 @@
 pub mod collect_isr;
-pub mod deadlock;
 pub mod lockset_analysis;
 pub mod lockset_analysis_old;
 

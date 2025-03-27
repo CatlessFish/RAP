@@ -63,8 +63,34 @@ impl CallGraphInfo {
         }
     }
 
+    /// Recursively get all callees of a caller
+    pub fn get_callees_defid_recursive(&self, caller_def_path: &String) -> Option<HashSet<DefId>> {
+        let mut callees_path: HashSet<DefId> = HashSet::new();
+        if let Some(caller_id) = self.node_registry.get(caller_def_path) {
+            // traverse the call graph
+            let mut visited = HashSet::new();
+            let mut stack = vec![caller_id];
+            while let Some(current_id) = stack.pop() {
+                if let Some(callee_ids) = self.function_calls.get(&current_id) {
+                    for id in callee_ids {
+                        if !visited.contains(id) {
+                            visited.insert(id);
+                            if let Some(callee_node) = self.functions.get(id) {
+                                callees_path.insert(callee_node.get_def_id());
+                                stack.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+            Some(callees_path)
+        } else {
+            None
+        }
+    }
+
     pub fn add_node(&mut self, def_id: DefId, def_path: &String) {
-        if let None = self.get_noed_by_path(def_path) {
+        if let None = self.get_node_by_path(def_path) {
             let id = self.node_registry.len();
             let node = Node::new(def_id, def_path);
             self.node_registry.insert(def_path.clone(), id);
@@ -81,9 +107,17 @@ impl CallGraphInfo {
         }
     }
 
-    pub fn get_noed_by_path(&self, def_path: &String) -> Option<usize> {
+    pub fn get_node_by_path(&self, def_path: &String) -> Option<usize> {
         if let Some(&id) = self.node_registry.get(def_path) {
             Some(id)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_defid_by_path(&self, def_path: &String) -> Option<DefId> {
+        if let Some(&id) = self.node_registry.get(def_path) {
+            Some(self.functions.get(&id).unwrap().get_def_id())
         } else {
             None
         }

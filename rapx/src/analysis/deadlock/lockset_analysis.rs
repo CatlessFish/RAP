@@ -10,14 +10,14 @@ use crate::analysis::deadlock::*;
 use crate::{rap_info, rap_debug};
 
 impl<'tcx> DeadlockDetection<'tcx> {
-    pub fn lockset_analysis(&self) {
+    pub fn lockset_analysis(&mut self) {
         rap_info!("Starting Lockset Analysis...");
         
         // 初始化程序锁集信息
         let mut program_lock_info = ProgramLockInfo {
             lock_objects: HashMap::new(),
             lock_apis: HashMap::new(),
-            function_infos: HashMap::new(),
+            function_lock_infos: HashMap::new(),
         };
         
         // 1. 收集锁对象
@@ -38,9 +38,12 @@ impl<'tcx> DeadlockDetection<'tcx> {
             }
         }
         rap_info!("Completed Lockset Analysis for {} functions", analyzed_count);
+
         
         // 输出分析结果
         self.output_analysis_results(&program_lock_info);
+
+        self.program_lock_info = program_lock_info;
     }
     
     // 收集程序中的锁对象
@@ -79,7 +82,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
     fn is_target_lock_type(&self, ty: Ty<'tcx>) -> bool {
         let type_str = ty.to_string();
         // rap_debug!("检查类型: {}", type_str);
-        for target_type in &self.target_types {
+        for target_type in &self.target_lock_types {
             if type_str.contains(target_type) {
                 return true;
             }
@@ -92,6 +95,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         rap_debug!("Collecting lock APIs...");
         
         // 遍历所有函数
+        // NOTE: THIS IS CRATE LOCAL
         for local_def_id in self.tcx.hir().body_owners() {
             let def_id = local_def_id.to_def_id();
             let fn_name = self.tcx.def_path_str(def_id);
@@ -187,7 +191,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 // 处理基本块的终结语句
                 if let Some(terminator) = &bb.terminator {
                     match &terminator.kind {
-                        TerminatorKind::Call { func, args, destination, target, .. } => {
+                        TerminatorKind::Call { func, args, destination, .. } => {
                             // TODO: 处理手动调用drop()的情况
                             // 处理函数调用
                             if let Some(func_def_id) = self.resolve_function_call(func) {
@@ -223,18 +227,8 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 ));
 
                             }
-
-                            // 传递lockset到下一个bb
-                            if let Some(next_bb_idx) = target {
-                                let target_lockset = func_info.bb_locksets.get_mut(&next_bb_idx).unwrap();
-                                let old_target = target_lockset.clone();
-                                target_lockset.merge(&current_lockset);
-                                if &old_target != target_lockset {
-                                    changed = true;
-                                }
-                            }
                         }
-                        TerminatorKind::Drop { place,target, .. } => {
+                        TerminatorKind::Drop { place, .. } => {
                             // 处理变量销毁，可能会释放锁
                             // TODO: 通过类型判断drop的是否真的是lockguard
                             if let Some(lock_def_id) = self.resolve_place_to_lockguard(&place, &local_guard_map, &dependency_map) {
@@ -242,43 +236,18 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 rap_debug!("Detected lock {:?} released in function {}", self.tcx.def_path_str(lock_def_id), func_name);
                                 current_lockset.update_lock_state(lock_def_id, LockState::MustNotHold);
                             }
-                            let target_lockset = func_info.bb_locksets.get_mut(target).unwrap();
-                            let old_target = target_lockset.clone();
-                            target_lockset.merge(&current_lockset);
-                            if &old_target != target_lockset {
-                                changed = true;
-                            }
                         }
-                        TerminatorKind::Goto { target } => {
-                            // 处理无条件跳转
-                            let target_lockset = func_info.bb_locksets.get_mut(target).unwrap();
-                            let old_target = target_lockset.clone();
-                            target_lockset.merge(&current_lockset);
-                            if &old_target != target_lockset {
-                                changed = true;
-                            }
-                        }
-                        TerminatorKind::SwitchInt { targets, .. } => {
-                            // 处理条件分支
-                            for target in targets.all_targets() {
-                                let target_lockset = func_info.bb_locksets.get_mut(target).unwrap();
-                                let old_target = target_lockset.clone();
-                                target_lockset.merge(&current_lockset);
-                                if &old_target != target_lockset {
-                                    changed = true;
-                                }
-                            }
-                        }
-                        TerminatorKind::Return => {
-                            // 处理函数返回
-                            let old_exit = func_info.exit_lockset.clone();
-                            func_info.exit_lockset.merge(&current_lockset);
-                            if old_exit != func_info.exit_lockset {
-                                changed = true;
-                            }
-                        }
-                        // 处理其他终结语句...
                         _ => {}
+                    }
+
+                    // Propagate lockset to successors
+                    for succ_bb in terminator.successors() {
+                        let succ_set = func_info.bb_locksets.get_mut(&succ_bb).unwrap();
+                        let old_set = succ_set.clone();
+                        succ_set.merge(&current_lockset);
+                        if &old_set != succ_set {
+                            changed = true;
+                        }
                     }
                 }
                 
@@ -290,7 +259,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
             }
         }
         
-        program_lock_info.function_infos.insert(func_def_id, func_info.clone());
+        program_lock_info.function_lock_infos.insert(func_def_id, func_info.clone());
 
         rap_debug!("Lockset Analysis for Function {} Completed", func_name);
         rap_debug!("DependencyMap: {:?}", dependency_map);
@@ -479,7 +448,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         }
         
         // 输出每个函数的锁集
-        for (func_def_id, func_info) in &program_lock_info.function_infos {
+        for (func_def_id, func_info) in &program_lock_info.function_lock_infos {
             if func_info.exit_lockset.is_all_bottom() {
                 continue;
             }

@@ -9,8 +9,7 @@ use rustc_span::{Span, Symbol};
 use std::collections::{HashMap, HashSet};
 use rustc_middle::mir::{BasicBlock, TerminatorKind};
 use crate::{rap_info, rap_debug};
-use crate::utils::source::get_fn_name;
-
+use crate::analysis::core::call_graph::CallGraph;
 
 // 表示一个锁对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -163,20 +162,144 @@ impl PartialEq for FunctionLockInfo {
 struct ProgramLockInfo {
     lock_objects: HashMap<DefId, LockObject>,      // 所有锁对象
     lock_apis: HashMap<DefId, (String, LockType)>, // 所有锁API及其对锁状态的影响
-    function_infos: HashMap<DefId, FunctionLockInfo>, // 每个函数的锁集信息
+    function_lock_infos: HashMap<DefId, FunctionLockInfo>, // 每个函数的锁集信息
 }
 
+impl ProgramLockInfo {
+    fn new() -> Self {
+        ProgramLockInfo {
+            lock_objects: HashMap::new(),
+            lock_apis: HashMap::new(),
+            function_lock_infos: HashMap::new(),
+        }
+    }
+}
+
+// ===== ISR =====
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IsrState {
+    Bottom,
+    Disabled, // Must
+    Enabled, // May
+}
+
+impl IsrState {
+    fn union(&self, other: &IsrState) -> IsrState {
+        match (self, other) {
+            (IsrState::Bottom, _) => other.clone(),
+            (_, IsrState::Bottom) => self.clone(),
+            (IsrState::Disabled, IsrState::Disabled) => IsrState::Disabled,
+            _ => IsrState::Enabled,
+        }
+    }
+}
+
+// 表示一个中断集
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterruptSet{
+    interrupt_states: HashMap<DefId, IsrState>,
+}
+
+impl InterruptSet {
+    fn new() -> Self {
+        InterruptSet { interrupt_states: HashMap::new() }
+    }
+
+    fn merge(&mut self, other: &InterruptSet) {
+        for (isr_id, other_state) in other.interrupt_states.iter() {
+            if let Some(old_state) = self.interrupt_states.get_mut(isr_id) {
+                *old_state = old_state.union(other_state);
+            } else {
+                self.interrupt_states.insert(isr_id.clone(), other_state.clone());
+            }
+        }
+    }
+
+    fn update_single_isr_state(&mut self, isr_id: DefId, state: IsrState) {
+        self.interrupt_states.insert(isr_id, state);
+    }
+
+    fn get_disabled_isrs(&self) -> Vec<DefId> {
+        self.interrupt_states.iter().filter(|(_, state)| **state == IsrState::Disabled).map(|(isr_id, _)| *isr_id).collect()
+    }
+
+    fn get_enabled_isrs(&self) -> Vec<DefId> {
+        self.interrupt_states.iter().filter(|(_, state)| **state == IsrState::Enabled).map(|(isr_id, _)| *isr_id).collect()
+    }
+    
+    fn is_all_bottom(&self) -> bool {
+        self.interrupt_states.iter().all(|(_, state)| *state == IsrState::Bottom)
+    }
+}
+
+impl Display for InterruptSet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Disabled: {:?}, Enabled: {:?}", self.get_disabled_isrs(), self.get_enabled_isrs())
+    }
+}
+
+// 函数的ISR信息
+#[derive(Debug, Clone)]
+pub struct FunctionInterruptInfo {
+    def_id: DefId,
+    exit_interruptset: InterruptSet,
+    bb_interruptsets: HashMap<BasicBlock, InterruptSet>,
+}
+
+impl PartialEq for FunctionInterruptInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.def_id == other.def_id &&
+        self.exit_interruptset == other.exit_interruptset &&
+        self.bb_interruptsets == other.bb_interruptsets
+    }
+}
+
+impl Display for FunctionInterruptInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} BBs in total, Exit: {}", self.bb_interruptsets.len(), self.exit_interruptset)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptApiType {
+    Disable,
+    Enable,
+}
+
+#[derive(Debug)]
+struct ProgramIsrInfo {
+    isr_entries: HashSet<DefId>, // 所有ISR入口函数(对应target_isr_entries)
+    isr_funcs: HashMap<DefId, Vec<DefId>>, // 所有ISR及其可能的调用者
+    function_interrupt_infos: HashMap<DefId, FunctionInterruptInfo>, // 每个函数的ISR信息
+}
+
+impl ProgramIsrInfo {
+    fn new() -> Self {
+        ProgramIsrInfo {
+            isr_entries: HashSet::new(),
+            isr_funcs: HashMap::new(),
+            function_interrupt_infos: HashMap::new(),
+        }
+    }
+}
 pub struct DeadlockDetection<'tcx> {
     pub tcx: TyCtxt<'tcx>,
-    pub target_types: Vec<&'tcx str>,
+    pub call_graph: CallGraph<'tcx>,
+    pub target_lock_types: Vec<&'tcx str>,
     pub target_lock_apis: Vec<(&'tcx str, &'tcx str)>,
+    pub target_isr_entries: Vec<&'tcx str>,
+    pub target_interrupt_apis: Vec<(&'tcx str, InterruptApiType)>,
+
+    program_lock_info: ProgramLockInfo,
+    program_isr_info: ProgramIsrInfo,
 }
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
-            target_types: vec![
+            call_graph: CallGraph::new(tcx),
+            target_lock_types: vec![
                 "sync::mutex::Mutex",
                 "sync::rwlock::RwLock",
                 "sync::rwmutex::RwMutex",
@@ -195,18 +318,39 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 ("sync::rwmutex::RwMutex::<T>::write", "write"),
                 ("sync::rwmutex::RwMutex::<T>::upread", "upgradable_read"),
             ],
+            target_isr_entries: vec![
+                "arch::x86::iommu::fault::iommu_page_fault_handler",
+                "arch::x86::kernel::tsc::determine_tsc_freq_via_pit::pit_callback",
+                "arch::x86::serial::handle_serial_input",
+                "arch::x86::timer::apic::init_periodic_mode::pit_callback",
+                "arch::x86::timer::timer_callback",
+                "smp::do_inter_processor_call",
+            ],
+            target_interrupt_apis: vec![
+                ("arch::x86::irq::enable_local", InterruptApiType::Enable),
+                ("arch::x86::irq::disable_local", InterruptApiType::Disable),
+            ],
+            program_lock_info: ProgramLockInfo::new(),
+            program_isr_info: ProgramIsrInfo::new(),
         }
     }
-    pub fn start(&self) {
+
+    /// Start Interrupt-Aware Deadlock Detection
+    /// Note: the detection is currently crate-local
+    pub fn start(&mut self) {
         rap_info!("Executing Deadlock Detection");
 
         // Steps:
+        // Dependencies
+        self.call_graph.set_quiet(true);
+        self.call_graph.start();
+
         // 1. Identify ISRs and Analysis InterruptSet
-        self.collect_isr();
+        self.isr_analysis();
 
         // TODO: consider alias
         // 2. Analysis LockSet
-        self.lockset_analysis();
+        // self.lockset_analysis();
 
         // 3. Computes Function Summary
 

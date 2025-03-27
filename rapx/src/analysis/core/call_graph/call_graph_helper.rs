@@ -115,6 +115,14 @@ impl CallGraphInfo {
         }
     }
 
+    pub fn get_defid_by_path(&self, def_path: &String) -> Option<DefId> {
+        if let Some(&id) = self.node_registry.get(def_path) {
+            Some(self.functions.get(&id).unwrap().get_def_id())
+        } else {
+            None
+        }
+    }
+
     pub fn print_call_graph(&self) {
         rap_info!("CallGraph Analysis:");
         // println!("There are {} functions calls!", self.function_calls.len());

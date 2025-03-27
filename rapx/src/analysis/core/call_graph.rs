@@ -8,7 +8,7 @@ use call_graph_visitor::CallGraphVisitor;
 use rustc_hir::def::DefKind;
 use rustc_middle::mir::Body;
 use rustc_middle::ty::TyCtxt;
-
+use rustc_middle::ty::InstanceKind;
 pub struct CallGraph<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub graph: CallGraphInfo,
@@ -40,7 +40,9 @@ impl<'tcx> CallGraph<'tcx> {
                             // Compile Time Function Evaluation
                             &self.tcx.mir_for_ctfe(def_id)
                         }
-                        _ => &self.tcx.optimized_mir(def_id),
+                        // using optimizied_mir() may cause ICE: do not use `optimized_mir` for constants
+                        // see https://github.com/rust-lang/rust/issues/81918
+                        _ => &self.tcx.instance_mir(InstanceKind::Item(def_id)),
                     };
                     let mut call_graph_visitor =
                         CallGraphVisitor::new(self.tcx, def_id.into(), body, &mut self.graph);

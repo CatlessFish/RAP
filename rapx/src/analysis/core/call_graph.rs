@@ -12,6 +12,7 @@ use rustc_middle::ty::TyCtxt;
 pub struct CallGraph<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub graph: CallGraphInfo,
+    pub quiet: bool,
 }
 
 impl<'tcx> CallGraph<'tcx> {
@@ -19,7 +20,12 @@ impl<'tcx> CallGraph<'tcx> {
         Self {
             tcx: tcx,
             graph: CallGraphInfo::new(),
+            quiet: false,
         }
+    }
+
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.quiet = quiet;
     }
 
     pub fn start(&mut self) {
@@ -50,7 +56,9 @@ impl<'tcx> CallGraph<'tcx> {
         //         call_graph_visitor.visit();
         //     }
         // }
-        self.graph.print_call_graph();
+        if !self.quiet {
+            self.graph.print_call_graph();
+        }
     }
 
     pub fn get_callee_def_path(&self, def_path: String) -> Option<HashSet<String>> {

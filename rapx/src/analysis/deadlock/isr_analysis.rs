@@ -20,8 +20,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         // This step is inter-procedural
         self.calculate_function_interrupt_sets();
 
-        // 3. Print interrupt sets for each function
-        self.print_function_interrupt_sets();
+        rap_info!("Completed ISR Analysis");
     }
 
     fn collect_isr(&mut self) {
@@ -119,9 +118,13 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 def_id: func_def_id,
                 exit_interruptset: InterruptSet::new(),
                 bb_interruptsets: bb_interrupt_sets,
+                interrupt_enable_sites: Vec::new(),
             };
         }
-        
+
+        // 当前函数的中断启用点
+        let mut interrupt_enable_sites: Vec<OperationSite> = Vec::new();
+
         // 将当前函数加入递归栈
         recursion_stack.insert(func_def_id);
         
@@ -157,6 +160,11 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                         match api_type {
                                             InterruptApiType::Enable => {
                                                 current_set.update_single_isr_state(isr_def_id, IsrState::Enabled);
+                                                interrupt_enable_sites.push(OperationSite {
+                                                    object_def_id: isr_def_id,
+                                                    func_def_id: func_def_id,
+                                                    bb_index: bb_idx,
+                                                });
                                             }
                                             InterruptApiType::Disable => {
                                                 current_set.update_single_isr_state(isr_def_id, IsrState::Disabled);
@@ -235,15 +243,18 @@ impl<'tcx> DeadlockDetection<'tcx> {
             def_id: func_def_id,
             exit_interruptset: exit_set.clone(),
             bb_interruptsets: bb_interrupt_sets,
+            interrupt_enable_sites: interrupt_enable_sites,
         };
         analyzed_functions.insert(func_def_id, result.clone());
         result
     }
     
-    fn print_function_interrupt_sets(&self) {
+    pub fn print_isr_analysis_result(&self) {
+        rap_info!("==== ISR Analysis Results ====");
         for (def_id, func_info) in self.program_isr_info.function_interrupt_infos.iter() {
             rap_info!("Function {} interrupt set: {}", self.tcx.def_path_str(def_id), func_info);
         }
+        rap_info!("==== ISR Analysis Results End ====");
     }
 }
 

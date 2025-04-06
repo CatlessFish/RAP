@@ -39,10 +39,6 @@ impl<'tcx> DeadlockDetection<'tcx> {
         }
         rap_info!("Completed Lockset Analysis for {} functions", analyzed_count);
 
-        
-        // 输出分析结果
-        self.output_analysis_results(&program_lock_info);
-
         self.program_lock_info = program_lock_info;
     }
     
@@ -140,6 +136,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
             exit_lockset: LockSet::new(),
             bb_locksets: HashMap::new(),
             call_sites: Vec::new(),
+            lock_sites: Vec::new(),
             // TODO: 缓存alias_map和guard_map以供context_sensitive分析使用
         };
         
@@ -212,6 +209,11 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                     if let Some(lock_def_id) = self.resolve_lock_object_from_args(&args, &local_lock_map, &dependency_map) {
                                         rap_debug!("Lock API {} acts on lock object: {}", api_name, self.tcx.def_path_str(lock_def_id));
                                         current_lockset.update_lock_state(lock_def_id, LockState::MustHold);
+                                        func_info.lock_sites.push(OperationSite {
+                                            object_def_id: lock_def_id,
+                                            func_def_id,
+                                            bb_index: bb_idx,
+                                        });
 
                                         // 处理锁API调用结果的别名关系
                                         // destination指向返回的lockguard
@@ -236,6 +238,9 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 rap_debug!("Detected lock {:?} released in function {}", self.tcx.def_path_str(lock_def_id), func_name);
                                 current_lockset.update_lock_state(lock_def_id, LockState::MustNotHold);
                             }
+                        }
+                        TerminatorKind::Return { .. } => {
+                            func_info.exit_lockset = current_lockset.clone();
                         }
                         _ => {}
                     }
@@ -435,13 +440,14 @@ impl<'tcx> DeadlockDetection<'tcx> {
     }
     
     // 输出分析结果
-    fn output_analysis_results(&self, program_lock_info: &ProgramLockInfo) {
+    pub fn print_lockset_analysis_results(&self) {
+        let program_lock_info = &self.program_lock_info;
         rap_info!("==== Lockset Analysis Results ====");
         rap_info!("Found {} lock objects", program_lock_info.lock_objects.len());
         
         // 输出所有锁对象
         for (def_id, lock_obj) in &program_lock_info.lock_objects {
-            rap_debug!("Lock Object: {:?}, Type: {}, Is Static: {}", 
+            rap_info!("Lock Object: {:?}, Type: {}, Is Static: {}", 
                      self.tcx.def_path_str(*def_id), 
                      lock_obj.lock_type, 
                      lock_obj.is_static);
@@ -450,17 +456,20 @@ impl<'tcx> DeadlockDetection<'tcx> {
         // 输出每个函数的锁集
         for (func_def_id, func_info) in &program_lock_info.function_lock_infos {
             if func_info.exit_lockset.is_all_bottom() {
+                // rap_info!("Function {} has no lock operations", self.tcx.def_path_str(*func_def_id));
                 continue;
             }
             let func_name = self.tcx.def_path_str(*func_def_id);
             rap_info!("Function: {}", func_name);
-            rap_info!("  Exit Lockset: {}", &func_info.exit_lockset);
+            rap_info!("  Exit Lockset: {}", func_info.exit_lockset);
             
             // // 输出调用点
             // for (callee_id, _, _) in &func_info.call_sites {
             //     rap_info!("  Callsites: {}", self.tcx.def_path_str(*callee_id));
             // }
         }
+
+        rap_info!("==== Lockset Analysis Results End ====");
     }
 }
 

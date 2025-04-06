@@ -64,8 +64,9 @@ impl CallGraphInfo {
     }
 
     /// Recursively get all callees of a caller
-    pub fn get_callees_defid_recursive(&self, caller_def_path: &String) -> Option<HashSet<DefId>> {
-        let mut callees_path: HashSet<DefId> = HashSet::new();
+    /// Return a vector of callees, by (partly) topological order, WITHOUT considering SCCs
+    pub fn get_callees_defid_recursive(&self, caller_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callees_path: Vec<DefId> = Vec::new();
         if let Some(caller_id) = self.node_registry.get(caller_def_path) {
             // traverse the call graph
             let mut visited = HashSet::new();
@@ -76,7 +77,7 @@ impl CallGraphInfo {
                         if !visited.contains(id) {
                             visited.insert(id);
                             if let Some(callee_node) = self.functions.get(id) {
-                                callees_path.insert(callee_node.get_def_id());
+                                callees_path.push(callee_node.get_def_id());
                                 stack.push(id);
                             }
                         }

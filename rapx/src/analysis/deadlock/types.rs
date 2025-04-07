@@ -137,7 +137,7 @@ pub struct FunctionLockInfo {
     pub entry_lockset: LockSet,                       // 入口锁集
     pub exit_lockset: LockSet,                        // 出口锁集
     pub bb_locksets: HashMap<BasicBlock, LockSet>,    // 每个基本块的锁集
-    pub call_sites: Vec<(DefId, Span, LockSet)>,      // 调用点信息
+    pub call_sites: Vec<(BasicBlock, DefId)>,      // 调用点信息
     pub lock_sites: Vec<OperationSite>,                    // 锁点信息
 }
 
@@ -314,7 +314,7 @@ impl FunctionSummary {
 
 impl Display for FunctionSummary {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Preempt: {:?}, Locking: {:?}", self.preempt_summary, self.locking_summary)
+        write!(f, "MayBePreempted: {:?}, MustHaveUnlocked: {:?}", self.preempt_summary, self.locking_summary)
     }
 }
 
@@ -328,5 +328,19 @@ impl ProgramFuncSummary {
         ProgramFuncSummary {
             function_summaries: HashMap::new(),
         }
+    }
+}
+
+// === ILG ===
+
+#[derive(Debug, Clone)]
+pub struct ILG {
+    pub interrupt_edges: HashMap<OperationSite, OperationSite>,
+    pub regular_edges: HashMap<DefId, DefId>,
+}
+
+impl ILG {
+    pub fn new() -> Self {
+        ILG { interrupt_edges: HashMap::new(), regular_edges: HashMap::new() }
     }
 }

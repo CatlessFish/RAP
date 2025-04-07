@@ -223,9 +223,8 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 
                                 // 记录调用点
                                 func_info.call_sites.push((
+                                    bb_idx,
                                     func_def_id,
-                                    terminator.source_info.span,
-                                    current_lockset.clone()
                                 ));
 
                             }
@@ -454,6 +453,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         }
         
         // 输出每个函数的锁集
+        let mut lock_count = 0;
         for (func_def_id, func_info) in &program_lock_info.function_lock_infos {
             if func_info.exit_lockset.is_all_bottom() {
                 // rap_info!("Function {} has no lock operations", self.tcx.def_path_str(*func_def_id));
@@ -467,9 +467,9 @@ impl<'tcx> DeadlockDetection<'tcx> {
             // for (callee_id, _, _) in &func_info.call_sites {
             //     rap_info!("  Callsites: {}", self.tcx.def_path_str(*callee_id));
             // }
+            lock_count += 1;
         }
-
-        rap_info!("==== Lockset Analysis Results End ====");
+        rap_info!("==== Lockset Analysis Results End ({} non-trivial functions) ====", lock_count);
     }
 }
 
@@ -480,3 +480,4 @@ impl<'tcx> DeadlockDetection<'tcx> {
 // 4. 追踪从参数中传进的锁，例如enable_dma_remapping()
 
 // 5. 结合CFG,构建临界区，计算M2
+// 6. 追踪mem::drop

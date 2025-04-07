@@ -251,10 +251,15 @@ impl<'tcx> DeadlockDetection<'tcx> {
     
     pub fn print_isr_analysis_result(&self) {
         rap_info!("==== ISR Analysis Results ====");
+        let mut count = 0;
         for (def_id, func_info) in self.program_isr_info.function_interrupt_infos.iter() {
+            if func_info.exit_interruptset.is_all_bottom() {
+                continue;
+            }
             rap_info!("Function {} interrupt set: {}", self.tcx.def_path_str(def_id), func_info);
+            count += 1;
         }
-        rap_info!("==== ISR Analysis Results End ====");
+        rap_info!("==== ISR Analysis Results End ({} non-trivial functions) ====", count);
     }
 }
 

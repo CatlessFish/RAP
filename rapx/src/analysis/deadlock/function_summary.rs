@@ -16,16 +16,48 @@ impl<'tcx> DeadlockDetection<'tcx> {
         for local_def_id in self.tcx.hir().body_owners() {
             let def_id = local_def_id.to_def_id();
             if self.tcx.is_mir_available(def_id) {
-                self.construct_function_summary(def_id, &mut program_func_summary);
+                self.construct_single_function_summary(def_id, &mut program_func_summary);
                 analyzed_count += 1;
             }
         }
         rap_info!("Completed Function Summary for {} functions", analyzed_count);
 
+        // worklist+不动点迭代，将callsite的summary合并到caller函数的summary
+        self.construct_function_summary(&mut program_func_summary);
+
         self.program_func_summary = program_func_summary;
     }
 
-    fn construct_function_summary(&self, func_def_id: DefId, program_func_summary: &mut ProgramFuncSummary) {
+    fn construct_function_summary(&self, program_func_summary: &mut ProgramFuncSummary) {
+        let mut worklist = Vec::new();
+        for (func_def_id, func_info) in &program_func_summary.function_summaries {
+            worklist.push(func_def_id.clone());
+        }
+
+        while !worklist.is_empty() {    
+            let func_def_id = worklist.pop().unwrap();
+            let _func_lock_info = self.program_lock_info.function_lock_infos.get(&func_def_id);
+            if _func_lock_info.is_none() {
+                continue;
+            }
+            let func_lock_info = _func_lock_info.unwrap();
+
+            let _func_summary = program_func_summary.function_summaries.get(&func_def_id);
+            if _func_summary.is_none() {
+                continue;
+            }
+            let func_summary = _func_summary.unwrap();
+
+            for (call_site_bb, callee_def_id) in func_lock_info.call_sites.iter() {
+                // Inline call site summary ( M1 and M2 )
+                // let callee_summary = program_func_summary.function_summaries.get(callee_def_id).unwrap();
+            }
+
+            //TODO
+        }
+    }
+
+    fn construct_single_function_summary(&self, func_def_id: DefId, program_func_summary: &mut ProgramFuncSummary) {
         /* filter const mir */
         if let Some(_other) = self.tcx.hir().body_const_context(func_def_id) {
             return;
@@ -53,15 +85,33 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 // this lock is acquired at some locksite (o, s')
                 // modify function_summary.preempt_summary[locksite] to mark the current isr as enabled
             }
-            
         }
+
+        // Update program_func_summary
+        program_func_summary.function_summaries.insert(func_def_id, function_summary);
     }
 
     pub fn print_function_summary_result(&self) {
         rap_info!("==== Function Summary Results ====");
+        let mut summary_count = 0;
         for (def_id, func_info) in self.program_func_summary.function_summaries.iter() {
-            rap_info!("Function {} summary: {}", self.tcx.def_path_str(def_id), func_info);
+            if func_info.preempt_summary.is_empty() && func_info.locking_summary.is_empty() {
+                continue;
+            }
+
+            rap_info!("Function {} summary:", self.tcx.def_path_str(def_id));
+
+            rap_info!(" MustNotBePreemptedBy:");
+            for (lock_site, interrupt_set) in &func_info.preempt_summary {
+                rap_info!("  LockSite: {:?}, ISRs: {:?}", lock_site.bb_index, interrupt_set.get_disabled_isrs());
+            }
+
+            rap_info!(" MustHaveUnlocked:");
+            for (lock_site, lock_set) in &func_info.locking_summary {
+                rap_info!("  LockSite: {:?}, Locks: {:?}", lock_site.bb_index, lock_set.get_must_not_hold_locks());
+            }
+            summary_count += 1;
         }
-        rap_info!("==== Function Summary Results End ====");
+        rap_info!("==== Function Summary Results End ({} non-trivial functions) ====", summary_count);
     }
 }

@@ -2,6 +2,7 @@ pub mod types;
 pub mod isr_analysis;
 pub mod lockset_analysis;
 pub mod function_summary;
+pub mod ilg_construction;
 
 use rustc_middle::ty::TyCtxt;
 use std::collections::{HashMap, HashSet};
@@ -20,6 +21,7 @@ pub struct DeadlockDetection<'tcx> {
     program_lock_info: ProgramLockInfo,
     program_isr_info: ProgramIsrInfo,
     program_func_summary: ProgramFuncSummary,
+    interrupt_lock_graph: ILG,
 }
 
 impl<'tcx> DeadlockDetection<'tcx> {
@@ -61,6 +63,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
             program_lock_info: ProgramLockInfo::new(),
             program_isr_info: ProgramIsrInfo::new(),
             program_func_summary: ProgramFuncSummary::new(),
+            interrupt_lock_graph: ILG::new(),
         }
     }
 
@@ -76,7 +79,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         // 1. Identify ISRs and Analysis InterruptSet
         self.isr_analysis();
-        // self.print_isr_analysis_result();
+        self.print_isr_analysis_result();
 
         // TODO: consider alias
         // 2. Analysis LockSet
@@ -88,8 +91,12 @@ impl<'tcx> DeadlockDetection<'tcx> {
         self.print_function_summary_result();
 
         // 4. Construct Lock Graph
+        self.construct_ilg();
+        self.print_ilg_result();
 
         // 5. Detect Cycles on Lock Graph
     }
 }
 
+// TODO:
+// 1. test? correctness?

@@ -3,7 +3,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Body;
 
 use crate::analysis::deadlock::*;
-use crate::{rap_info, rap_debug};
+use crate::{rap_info, rap_debug, rap_error};
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn function_summary(&mut self) {
@@ -71,15 +71,30 @@ impl<'tcx> DeadlockDetection<'tcx> {
         let func_lock_info = self.program_lock_info.function_lock_infos.get(&func_def_id).unwrap();
         let func_isr_info = self.program_isr_info.function_interrupt_infos.get(&func_def_id).unwrap();
         for lock_site in func_lock_info.lock_sites.iter() {
-            let lock_set = func_lock_info.bb_locksets.get(&lock_site.bb_index).unwrap();
-            let interrupt_set = func_isr_info.bb_interruptsets.get(&lock_site.bb_index).unwrap();
+            if lock_site.bb_index.is_none() {
+                rap_error!("lock_site.bb_index is none {:?}", lock_site);
+                continue;
+            }
+
+            // NOTE: lock_site is the last operation in this bb, however, the lock_set is computed at the end of this bb, so the lockset is affected by the lock operation.
+            // For a temporary solution, when using the lockset, we should manually subtract the current lock from the lockset
+            // This is based on the assumption that the lock should not be held before the lock operation. (otherwise there is an obvious deadlock)
+            // IE, we ignore the possibility of regular edge caused deadlock.
+
+            // FIXME
+            let lock_set = func_lock_info.bb_locksets.get(&lock_site.bb_index.unwrap()).unwrap();
+            let interrupt_set = func_isr_info.bb_interruptsets.get(&lock_site.bb_index.unwrap()).unwrap();
 
             function_summary.preempt_summary.insert(lock_site.clone(), interrupt_set.clone());
             function_summary.locking_summary.insert(lock_site.clone(), lock_set.clone());
         }
 
         for interrupt_enable_site in func_isr_info.interrupt_enable_sites.iter() {
-            let lock_set = func_lock_info.bb_locksets.get(&interrupt_enable_site.bb_index).unwrap();
+            if interrupt_enable_site.bb_index.is_none() {
+                rap_error!("interrupt_enable_site.bb_index is none {:?}", interrupt_enable_site);
+                continue;
+            }
+            let lock_set = func_lock_info.bb_locksets.get(&interrupt_enable_site.bb_index.unwrap()).unwrap();
             for lock_def_id in lock_set.get_must_hold_locks() {
                 // TODO:
                 // this lock is acquired at some locksite (o, s')

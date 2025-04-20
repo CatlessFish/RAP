@@ -1,7 +1,5 @@
 use rustc_hir::def_id::DefId;
-use rustc_hir::def::DefKind;
 use rustc_middle::mir::Body;
-use rustc_middle::ty::TyCtxt;
 
 
 use crate::analysis::deadlock::*;
@@ -45,6 +43,10 @@ impl<'tcx> DeadlockDetection<'tcx> {
         let mut isr_info: HashMap<DefId, Vec<DefId>> = HashMap::new();
         for &isr_entry in self.target_isr_entries.iter() {
             if let Some(isr_def_id) = isr_def_ids.get(isr_entry) {
+                // first, mark isr entries themselves as called by themselves
+                isr_info.entry(isr_def_id.clone()).or_insert(Vec::new()).push(isr_def_id.clone());
+
+                // then, find all possible callees
                 if let Some(callees) = self.call_graph.graph.get_callees_defid_recursive(&isr_entry.to_string()) {
                     for callee in callees {
                         isr_info.entry(callee).or_insert(Vec::new()).push(isr_def_id.clone());
@@ -162,8 +164,8 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                                 current_set.update_single_isr_state(isr_def_id, IsrState::Enabled);
                                                 interrupt_enable_sites.push(OperationSite {
                                                     object_def_id: isr_def_id,
-                                                    func_def_id: func_def_id,
-                                                    bb_index: bb_idx,
+                                                    func_def_id: Some(func_def_id),
+                                                    bb_index: Some(bb_idx),
                                                 });
                                             }
                                             InterruptApiType::Disable => {
@@ -251,6 +253,11 @@ impl<'tcx> DeadlockDetection<'tcx> {
     
     pub fn print_isr_analysis_result(&self) {
         rap_info!("==== ISR Analysis Results ====");
+
+        for (isr_def_id, isr_funcs) in self.program_isr_info.isr_funcs.iter() {
+            rap_info!("ISR function {} may be called by: {:?}", self.tcx.def_path_str(*isr_def_id), isr_funcs);
+        }
+
         let mut count = 0;
         for (def_id, func_info) in self.program_isr_info.function_interrupt_infos.iter() {
             if func_info.exit_interruptset.is_all_bottom() {
@@ -259,7 +266,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
             rap_info!("Function {} interrupt set: {}", self.tcx.def_path_str(def_id), func_info);
             count += 1;
         }
-        rap_info!("==== ISR Analysis Results End ({} non-trivial functions) ====", count);
+        rap_info!("==== ISR Analysis Results End ({} ISR functions, {} non-trivial interrupt set functions) ====", self.program_isr_info.isr_entries.len(), count);
     }
 }
 

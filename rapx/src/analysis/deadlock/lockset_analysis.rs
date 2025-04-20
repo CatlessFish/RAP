@@ -191,7 +191,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                         TerminatorKind::Call { func, args, destination, .. } => {
                             // TODO: 处理手动调用drop()的情况
                             // 处理函数调用
-                            if let Some(func_def_id) = self.resolve_function_call(func) {
+                            if let Some(callee_func_def_id) = self.resolve_function_call(func) {
                                 // 更新dependency_map
                                 let l_place = destination.local;
                                 for arg in args {
@@ -202,7 +202,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 }
 
                                 // 检查是否是锁API
-                                if let Some((api_name, ..)) = program_lock_info.lock_apis.get(&func_def_id) {
+                                if let Some((api_name, ..)) = program_lock_info.lock_apis.get(&callee_func_def_id) {
                                     rap_debug!("Found lock API: {} in function {}", api_name, func_name);
                                     
                                     // 尝试确定操作的锁对象
@@ -211,8 +211,8 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                         current_lockset.update_lock_state(lock_def_id, LockState::MustHold);
                                         func_info.lock_sites.push(OperationSite {
                                             object_def_id: lock_def_id,
-                                            func_def_id,
-                                            bb_index: bb_idx,
+                                            func_def_id: Some(func_def_id),
+                                            bb_index: Some(bb_idx),
                                         });
 
                                         // 处理锁API调用结果的别名关系
@@ -224,7 +224,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 // 记录调用点
                                 func_info.call_sites.push((
                                     bb_idx,
-                                    func_def_id,
+                                    callee_func_def_id,
                                 ));
 
                             }

@@ -1,5 +1,5 @@
 use crate::analysis::deadlock::*;
-use crate::{rap_info, rap_debug};
+use crate::{ rap_debug, rap_info };
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn construct_ilg(&mut self) {
@@ -11,27 +11,45 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         for func in all_funcs.iter() {
             for isr in isr_funcs.iter() {
+                rap_debug!("func: {:?}, isr: {:?}", func, isr);
                 // TODO:
                 // if isr has higher priority than func
                 let func_summary = self.program_func_summary.function_summaries.get(func);
                 if func_summary.is_none() {
+                    rap_debug!("  continue: func_summary of {:?} is None", func);
                     continue;
                 }
                 let func_summary = func_summary.unwrap();
                 
+                if func_summary.preempt_summary.is_empty() {
+                    rap_debug!("  continue: func {:?} has no preempt summary", func);
+                    continue;
+                }
                 for (func_lock_site, interrupt_set) in func_summary.preempt_summary.iter() {
                     if interrupt_set.get_disabled_isrs().contains(isr) {
+                        rap_debug!("  continue: isr {:?} is disabled in func {:?}", isr, func);
                         continue;
                     }
+                    rap_debug!("func_lock_site: {:?}", func_lock_site);
 
                     let isr_func_summary = self.program_func_summary.function_summaries.get(isr);
                     if isr_func_summary.is_none() {
+                        rap_debug!("  continue: isr_func_summary of {:?} is None", isr);
                         continue;
                     }
                     let isr_func_summary = isr_func_summary.unwrap();
 
+                    if isr_func_summary.locking_summary.is_empty() {
+                        rap_debug!("  continue: isr_func {:?} has no locking summary", isr);
+                        continue;
+                    }
                     for (isr_lock_site, _) in isr_func_summary.locking_summary.iter() {
-                        self.interrupt_lock_graph.interrupt_edges.insert(func_lock_site.clone(), isr_lock_site.clone());
+                        rap_debug!("Adding interrupt edge to isr_lock_site: {:?}", isr_lock_site);
+                        self.interrupt_lock_graph.edges.push(ILGEdge {
+                            source: func_lock_site.clone(),
+                            target: isr_lock_site.clone(),
+                            edge_type: EdgeType::Interrupt,
+                        });
                     }
                     
                 }
@@ -48,8 +66,23 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
             // lock operations
             for (lock_site, lock_set) in func_summary.locking_summary.iter() {
+                // Fixme: should use previous bb's lockset
                 for held_lock in lock_set.get_must_hold_locks() {
-                    self.interrupt_lock_graph.regular_edges.insert(held_lock.clone(), lock_site.object_def_id.clone());
+                    if held_lock == lock_site.object_def_id {
+                        rap_debug!("  continue: held_lock == lock_site.object_def_id {:?}", lock_site);
+                        continue;
+                    }
+                    rap_info!("Adding regular edge from {:?} to {:?}", lock_site, held_lock);
+                    self.interrupt_lock_graph.edges.push(ILGEdge {
+                        source: lock_site.clone(),
+                        // TODO: try to get locksite
+                        target: OperationSite {
+                            object_def_id: held_lock.clone(),
+                            func_def_id: None,
+                            bb_index: None,
+                        },
+                        edge_type: EdgeType::Regular,
+                    });
                 }
             }
 
@@ -73,7 +106,17 @@ impl<'tcx> DeadlockDetection<'tcx> {
                             continue;
                         }
 
-                        self.interrupt_lock_graph.regular_edges.insert(acquired_lock.clone(), incoming_lock_site.object_def_id.clone());
+                        rap_info!("Adding regular edge from {:?} to {:?}", acquired_lock, incoming_lock_site);
+                        self.interrupt_lock_graph.edges.push(ILGEdge {
+                            // TODO: try to get locksite
+                            source: OperationSite {
+                                object_def_id: acquired_lock.clone(),
+                                func_def_id: None,
+                                bb_index: None,
+                            },
+                            target: incoming_lock_site.clone(),
+                            edge_type: EdgeType::Regular,
+                        });
                     }
                 }
             }
@@ -82,8 +125,11 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
     pub fn print_ilg_result(&self) {
         rap_info!("==== ILG Result ====");
-        rap_info!("{} interrupt edges", self.interrupt_lock_graph.interrupt_edges.len());
-        rap_info!("{} regular edges", self.interrupt_lock_graph.regular_edges.len());
+        rap_info!("{} interrupt edges", self.interrupt_lock_graph.edges.iter().filter(|edge| edge.edge_type == EdgeType::Interrupt).count());
+        rap_info!("{} regular edges", self.interrupt_lock_graph.edges.iter().filter(|edge| edge.edge_type == EdgeType::Regular).count());
+        for edge in self.interrupt_lock_graph.edges.iter() {
+            rap_info!("{}", edge);
+        }
         rap_info!("==== End of ILG Result ====");
     }
 }

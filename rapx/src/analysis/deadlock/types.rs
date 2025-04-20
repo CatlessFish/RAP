@@ -1,9 +1,9 @@
 use rustc_hir::def_id::DefId;
-
+use rustc_middle::ty::TyCtxt;
 use std::fmt::{self, Formatter, Display};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::BasicBlock;
+use rustc_middle::mir::{BasicBlock, BasicBlockData};
 
 // 表示一个锁对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -287,8 +287,42 @@ impl ProgramIsrInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OperationSite {
     pub object_def_id: DefId,
-    pub func_def_id: DefId,
-    pub bb_index: BasicBlock,
+    pub func_def_id: Option<DefId>, // Should only be None for regular lock edge nodes, because we may not know where the lock is acquired
+    pub bb_index: Option<BasicBlock>, // As above
+}
+
+impl OperationSite {
+    pub fn to_span(&self, tcx: &TyCtxt) -> Option<Span> {
+        if self.func_def_id.is_none() || self.bb_index.is_none() {
+            return None;
+        }
+        if !tcx.is_mir_available(self.func_def_id.unwrap()) {
+            return None;
+        }
+        let body = tcx.optimized_mir(self.func_def_id.unwrap());
+        let bb: &BasicBlockData = &body.basic_blocks[self.bb_index.unwrap()];
+        let terminator = bb.terminator();
+        Some(terminator.source_info.span)
+    }
+
+    pub fn to_string(&self, tcx: &TyCtxt) -> String {
+        let span = self.to_span(tcx);
+        if let Some(span) = span {
+            format!("{:?} at {:?}", self.object_def_id, span)
+        } else {
+            format!("{:?}", self.object_def_id)
+        }
+    }
+}
+
+impl Display for OperationSite {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.func_def_id.is_none() || self.bb_index.is_none() {
+            write!(f, "{:?}", self.object_def_id)
+        } else {
+            write!(f, "{:?} in {:?}", self.object_def_id, self.func_def_id.unwrap())
+        }
+    }
 }
 
 // M1: Map<LockSite, InterruptSet>
@@ -333,14 +367,32 @@ impl ProgramFuncSummary {
 
 // === ILG ===
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EdgeType {
+    Interrupt,
+    Regular,
+}
+
+#[derive(Debug, Clone)]
+pub struct ILGEdge {
+    pub source: OperationSite,
+    pub target: OperationSite,
+    pub edge_type: EdgeType,
+}
+
+impl Display for ILGEdge {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} --{:?}--> {}", self.source, self.edge_type, self.target)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ILG {
-    pub interrupt_edges: HashMap<OperationSite, OperationSite>,
-    pub regular_edges: HashMap<DefId, DefId>,
+    pub edges: Vec<ILGEdge>,
 }
 
 impl ILG {
     pub fn new() -> Self {
-        ILG { interrupt_edges: HashMap::new(), regular_edges: HashMap::new() }
+        ILG { edges: Vec::new() }
     }
 }

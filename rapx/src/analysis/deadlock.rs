@@ -3,11 +3,12 @@ pub mod isr_analysis;
 pub mod lockset_analysis;
 pub mod function_summary;
 pub mod ilg_construction;
+pub mod deadlock_detection;
 
 use rustc_middle::ty::TyCtxt;
 use std::collections::{HashMap, HashSet};
 use rustc_middle::mir::{BasicBlock, TerminatorKind};
-use crate::{rap_info, rap_debug};
+use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::*;
 pub struct DeadlockDetection<'tcx> {
@@ -55,6 +56,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 "arch::x86::timer::apic::init_periodic_mode::pit_callback",
                 "arch::x86::timer::timer_callback",
                 "smp::do_inter_processor_call",
+                "mm::tlb::do_remote_flush", // This is added manually
             ],
             target_interrupt_apis: vec![
                 ("arch::x86::irq::enable_local", InterruptApiType::Enable),
@@ -95,6 +97,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         self.print_ilg_result();
 
         // 5. Detect Cycles on Lock Graph
+        self.detect_deadlock();
     }
 }
 

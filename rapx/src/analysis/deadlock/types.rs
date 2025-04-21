@@ -1,24 +1,24 @@
 use rustc_hir::def_id::DefId;
+use rustc_middle::mir::{BasicBlock, BasicBlockData};
 use rustc_middle::ty::TyCtxt;
-use std::fmt::{self, Formatter, Display};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock, BasicBlockData};
+use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LockObject {
-    pub def_id: DefId,          // The DefId of the lock variable
-    pub lock_type: String,      // The type of lock (Mutex/RwLock etc.)
-    pub is_static: bool,        // Whether it's a static lock
-    pub span: Span,             // Source code location
+    pub def_id: DefId,     // The DefId of the lock variable
+    pub lock_type: String, // The type of lock (Mutex/RwLock etc.)
+    pub is_static: bool,   // Whether it's a static lock
+    pub span: Span,        // Source code location
 }
 
 // Represents the type of lock
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LockType {
-    ReadLocked,             // Read lock state
-    WriteLocked,            // Write lock state
-    UpgradeableReadLocked,  // Upgradeable read lock state (specific to RwLock)
+    ReadLocked,            // Read lock state
+    WriteLocked,           // Write lock state
+    UpgradeableReadLocked, // Upgradeable read lock state (specific to RwLock)
 }
 
 // Represents the state of a lock
@@ -83,7 +83,7 @@ impl LockSet {
             lock_states: HashMap::new(),
         }
     }
-    
+
     // Merges two locksets (used at branch join points)
     // Usage: next_bb_lockstate.merge(&current_bb_lockstate)
     pub fn merge(&mut self, other: &LockSet) {
@@ -91,7 +91,8 @@ impl LockSet {
             if let Some(old_state) = self.lock_states.get_mut(lock_id) {
                 *old_state = old_state.union(other_state);
             } else {
-                self.lock_states.insert(lock_id.clone(), other_state.clone());
+                self.lock_states
+                    .insert(lock_id.clone(), other_state.clone());
             }
         }
     }
@@ -103,51 +104,70 @@ impl LockSet {
 
     // Gets the list of locks in must_hold state
     pub fn get_must_hold_locks(&self) -> Vec<DefId> {
-        self.lock_states.iter().filter(|(_, state)| **state == LockState::MustHold).map(|(lock_id, _)| *lock_id).collect()
+        self.lock_states
+            .iter()
+            .filter(|(_, state)| **state == LockState::MustHold)
+            .map(|(lock_id, _)| *lock_id)
+            .collect()
     }
 
     // Gets the list of locks in may_hold state
     pub fn get_may_hold_locks(&self) -> Vec<DefId> {
-        self.lock_states.iter().filter(|(_, state)| **state == LockState::MayHold).map(|(lock_id, _)| *lock_id).collect()
+        self.lock_states
+            .iter()
+            .filter(|(_, state)| **state == LockState::MayHold)
+            .map(|(lock_id, _)| *lock_id)
+            .collect()
     }
-    
+
     // Gets the list of locks in must_not_hold state
     pub fn get_must_not_hold_locks(&self) -> Vec<DefId> {
-        self.lock_states.iter().filter(|(_, state)| **state == LockState::MustNotHold).map(|(lock_id, _)| *lock_id).collect()
+        self.lock_states
+            .iter()
+            .filter(|(_, state)| **state == LockState::MustNotHold)
+            .map(|(lock_id, _)| *lock_id)
+            .collect()
     }
 
     // Checks if all locks are in Bottom state
     pub fn is_all_bottom(&self) -> bool {
-        self.lock_states.iter().all(|(_, state)| *state == LockState::Bottom)
+        self.lock_states
+            .iter()
+            .all(|(_, state)| *state == LockState::Bottom)
     }
 }
 
 impl Display for LockSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "MustHold: {:?}, MustNotHold: {:?}, MayHold: {:?}", self.get_must_hold_locks(), self.get_must_not_hold_locks(), self.get_may_hold_locks())
+        write!(
+            f,
+            "MustHold: {:?}, MustNotHold: {:?}, MayHold: {:?}",
+            self.get_must_hold_locks(),
+            self.get_must_not_hold_locks(),
+            self.get_may_hold_locks()
+        )
     }
 }
-
 
 // Function's lockset information
 #[derive(Debug, Clone)]
 pub struct FunctionLockInfo {
-    pub def_id: DefId,                                // Function ID
-    pub entry_lockset: LockSet,                       // Entry point lockset
-    pub exit_lockset: LockSet,                        // Exit point lockset
-    pub bb_locksets: HashMap<BasicBlock, LockSet>,    // Lockset for each basic block
+    pub def_id: DefId,                             // Function ID
+    pub entry_lockset: LockSet,                    // Entry point lockset
+    pub exit_lockset: LockSet,                     // Exit point lockset
+    pub bb_locksets: HashMap<BasicBlock, LockSet>, // Lockset for each basic block
     pub call_sites: Vec<(BasicBlock, DefId)>,      // Call site information
-    pub lock_sites: Vec<OperationSite>,                    // Lock site information
+    pub lock_sites: Vec<OperationSite>,            // Lock site information
 }
 
 // Implementing PartialEq for FunctionLockInfo
 impl PartialEq for FunctionLockInfo {
     fn eq(&self, other: &Self) -> bool {
-        self.def_id == other.def_id &&
-        self.entry_lockset == other.entry_lockset &&
-        self.exit_lockset == other.exit_lockset &&
-        self.bb_locksets == other.bb_locksets &&
-        self.lock_sites == other.lock_sites
+        self.def_id == other.def_id
+            && self.entry_lockset == other.entry_lockset
+            && self.exit_lockset == other.exit_lockset
+            && self.bb_locksets == other.bb_locksets
+            && self.lock_sites == other.lock_sites
         // Ignoring comparison of call_sites as it's mainly used for intra-procedural analysis
     }
 }
@@ -155,7 +175,7 @@ impl PartialEq for FunctionLockInfo {
 // Program-wide lock information
 #[derive(Debug)]
 pub struct ProgramLockInfo {
-    pub lock_objects: HashMap<DefId, LockObject>,      // All lock objects
+    pub lock_objects: HashMap<DefId, LockObject>, // All lock objects
     pub lock_apis: HashMap<DefId, (String, LockType)>, // All lock APIs and their impact on lock states
     pub function_lock_infos: HashMap<DefId, FunctionLockInfo>, // Lockset information for each function
 }
@@ -175,7 +195,7 @@ impl ProgramLockInfo {
 pub enum IsrState {
     Bottom,
     Disabled, // Must
-    Enabled, // May
+    Enabled,  // May
 }
 
 impl IsrState {
@@ -191,13 +211,15 @@ impl IsrState {
 
 // Represents an interrupt set
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterruptSet{
+pub struct InterruptSet {
     pub interrupt_states: HashMap<DefId, IsrState>,
 }
 
 impl InterruptSet {
     pub fn new() -> Self {
-        InterruptSet { interrupt_states: HashMap::new() }
+        InterruptSet {
+            interrupt_states: HashMap::new(),
+        }
     }
 
     pub fn merge(&mut self, other: &InterruptSet) {
@@ -205,7 +227,8 @@ impl InterruptSet {
             if let Some(old_state) = self.interrupt_states.get_mut(isr_id) {
                 *old_state = old_state.union(other_state);
             } else {
-                self.interrupt_states.insert(isr_id.clone(), other_state.clone());
+                self.interrupt_states
+                    .insert(isr_id.clone(), other_state.clone());
             }
         }
     }
@@ -215,21 +238,36 @@ impl InterruptSet {
     }
 
     pub fn get_disabled_isrs(&self) -> Vec<DefId> {
-        self.interrupt_states.iter().filter(|(_, state)| **state == IsrState::Disabled).map(|(isr_id, _)| *isr_id).collect()
+        self.interrupt_states
+            .iter()
+            .filter(|(_, state)| **state == IsrState::Disabled)
+            .map(|(isr_id, _)| *isr_id)
+            .collect()
     }
 
     pub fn get_enabled_isrs(&self) -> Vec<DefId> {
-        self.interrupt_states.iter().filter(|(_, state)| **state == IsrState::Enabled).map(|(isr_id, _)| *isr_id).collect()
+        self.interrupt_states
+            .iter()
+            .filter(|(_, state)| **state == IsrState::Enabled)
+            .map(|(isr_id, _)| *isr_id)
+            .collect()
     }
-    
+
     pub fn is_all_bottom(&self) -> bool {
-        self.interrupt_states.iter().all(|(_, state)| *state == IsrState::Bottom)
+        self.interrupt_states
+            .iter()
+            .all(|(_, state)| *state == IsrState::Bottom)
     }
 }
 
 impl Display for InterruptSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Disabled: {:?}, Enabled: {:?}", self.get_disabled_isrs(), self.get_enabled_isrs())
+        write!(
+            f,
+            "Disabled: {:?}, Enabled: {:?}",
+            self.get_disabled_isrs(),
+            self.get_enabled_isrs()
+        )
     }
 }
 
@@ -244,16 +282,21 @@ pub struct FunctionInterruptInfo {
 
 impl PartialEq for FunctionInterruptInfo {
     fn eq(&self, other: &Self) -> bool {
-        self.def_id == other.def_id &&
-        self.exit_interruptset == other.exit_interruptset &&
-        self.bb_interruptsets == other.bb_interruptsets &&
-        self.interrupt_enable_sites == other.interrupt_enable_sites
+        self.def_id == other.def_id
+            && self.exit_interruptset == other.exit_interruptset
+            && self.bb_interruptsets == other.bb_interruptsets
+            && self.interrupt_enable_sites == other.interrupt_enable_sites
     }
 }
 
 impl Display for FunctionInterruptInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} BBs in total, Exit: {}", self.bb_interruptsets.len(), self.exit_interruptset)
+        write!(
+            f,
+            "{} BBs in total, Exit: {}",
+            self.bb_interruptsets.len(),
+            self.exit_interruptset
+        )
     }
 }
 
@@ -319,7 +362,12 @@ impl Display for OperationSite {
         if self.func_def_id.is_none() || self.bb_index.is_none() {
             write!(f, "{:?}", self.object_def_id)
         } else {
-            write!(f, "{:?} in {:?}", self.object_def_id, self.func_def_id.unwrap())
+            write!(
+                f,
+                "{:?} in {:?}",
+                self.object_def_id,
+                self.func_def_id.unwrap()
+            )
         }
     }
 }
@@ -347,7 +395,11 @@ impl FunctionSummary {
 
 impl Display for FunctionSummary {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "MayBePreempted: {:?}, MustHaveUnlocked: {:?}", self.preempt_summary, self.locking_summary)
+        write!(
+            f,
+            "MayBePreempted: {:?}, MustHaveUnlocked: {:?}",
+            self.preempt_summary, self.locking_summary
+        )
     }
 }
 
@@ -381,7 +433,11 @@ pub struct ILGEdge {
 
 impl Display for ILGEdge {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} --{:?}--> {}", self.source, self.edge_type, self.target)
+        write!(
+            f,
+            "{} --{:?}--> {}",
+            self.source, self.edge_type, self.target
+        )
     }
 }
 

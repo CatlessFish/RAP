@@ -56,7 +56,7 @@ fn main() {
             "-adt" => {}
             "-z3" => {}
             "-meta" => {}
-            "-dev" => {}
+            "-deadlock" => compiler.enable_deadlock(),
             _ => args.push(arg),
         }
     }

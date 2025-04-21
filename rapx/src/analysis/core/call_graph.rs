@@ -7,8 +7,8 @@ use call_graph_helper::CallGraphInfo;
 use call_graph_visitor::CallGraphVisitor;
 use rustc_hir::def::DefKind;
 use rustc_middle::mir::Body;
-use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::InstanceKind;
+use rustc_middle::ty::TyCtxt;
 pub struct CallGraph<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub graph: CallGraphInfo,

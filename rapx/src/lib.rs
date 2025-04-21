@@ -17,6 +17,7 @@ extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_target;
 
+use crate::analysis::deadlock::DeadlockDetection;
 use analysis::api_dep::ApiDep;
 use analysis::core::alias::mop::MopAlias;
 use analysis::core::call_graph::CallGraph;
@@ -35,7 +36,6 @@ use rustc_middle::ty::TyCtxt;
 use rustc_middle::util::Providers;
 use rustc_session::search_paths::PathKind;
 use std::path::PathBuf;
-use crate::analysis::deadlock::DeadlockDetection;
 
 // Insert rustc arguments at the beginning of the argument list that RAP wants to be
 // set per default, for maximal validation power.
@@ -55,6 +55,7 @@ pub struct RapCallback {
     show_mir: bool,
     dataflow: usize,
     opt: bool,
+    deadlock: bool,
 }
 
 impl Default for RapCallback {
@@ -70,6 +71,7 @@ impl Default for RapCallback {
             show_mir: false,
             dataflow: 0,
             opt: false,
+            deadlock: false,
         }
     }
 }
@@ -185,6 +187,14 @@ impl RapCallback {
     pub fn is_opt_enabled(self) -> bool {
         self.opt
     }
+
+    pub fn enable_deadlock(&mut self) {
+        self.deadlock = true;
+    }
+
+    pub fn is_deadlock_enabled(self) -> bool {
+        self.deadlock
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -272,6 +282,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
         Opt::new(tcx).start();
     }
 
-    // if
-    DeadlockDetection::new(tcx).start();
+    if callback.is_deadlock_enabled() {
+        DeadlockDetection::new(tcx).start();
+    }
 }

@@ -1,16 +1,16 @@
-pub mod types;
-pub mod isr_analysis;
-pub mod lockset_analysis;
+pub mod deadlock_detection;
 pub mod function_summary;
 pub mod ilg_construction;
-pub mod deadlock_detection;
+pub mod isr_analysis;
+pub mod lockset_analysis;
+pub mod types;
 
-use rustc_middle::ty::TyCtxt;
-use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock, TerminatorKind};
-use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::*;
+use crate::rap_info;
+use rustc_middle::mir::{BasicBlock, TerminatorKind};
+use rustc_middle::ty::TyCtxt;
+use std::collections::{HashMap, HashSet};
 pub struct DeadlockDetection<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub call_graph: CallGraph<'tcx>,

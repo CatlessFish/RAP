@@ -23,7 +23,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         ) {
             visited.insert(node.clone());
             stack.push(node.clone());
-    
+
             // NOTE: a -> a pattern
             // TODO: Optimize time complexity
             for edge in edges.iter() {
@@ -31,7 +31,10 @@ impl<'tcx> DeadlockDetection<'tcx> {
                     let neighbor = edge.target;
 
                     // If the lock object is already in the stack, there is a deadlock
-                    if stack.iter().any(|stack_node| stack_node.object_def_id == neighbor.object_def_id) {
+                    if stack
+                        .iter()
+                        .any(|stack_node| stack_node.object_def_id == neighbor.object_def_id)
+                    {
                         // Deadlock path is the node in stack between neighbor and current node
                         let mut deadlock_path = Vec::<OperationSite>::new();
                         let mut flag = false;
@@ -46,7 +49,14 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 break;
                             }
                         }
-                        rap_info!("Deadlock detected: {}", deadlock_path.iter().map(|node| node.to_string(tcx)).collect::<Vec<String>>().join(" -> "));
+                        rap_info!(
+                            "Deadlock detected: {}",
+                            deadlock_path
+                                .iter()
+                                .map(|node| node.to_string(tcx))
+                                .collect::<Vec<String>>()
+                                .join(" -> ")
+                        );
                     }
                     if !visited.contains(&neighbor) {
                         dfs(&neighbor, edges, visited, stack, tcx);
@@ -58,7 +68,13 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         for node in self.interrupt_lock_graph.edges.iter() {
             if !visited.contains(&node.source) {
-                dfs(&node.source, &self.interrupt_lock_graph.edges, &mut visited, &mut stack, &self.tcx);
+                dfs(
+                    &node.source,
+                    &self.interrupt_lock_graph.edges,
+                    &mut visited,
+                    &mut stack,
+                    &self.tcx,
+                );
             }
         }
     }

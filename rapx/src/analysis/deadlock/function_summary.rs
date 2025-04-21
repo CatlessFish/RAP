@@ -1,7 +1,7 @@
 use rustc_hir::def_id::DefId;
 
 use crate::analysis::deadlock::*;
-use crate::{rap_info, rap_debug, rap_error};
+use crate::{rap_debug, rap_error, rap_info};
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn function_summary(&mut self) {
@@ -18,7 +18,10 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 analyzed_count += 1;
             }
         }
-        rap_info!("Completed Function Summary for {} functions", analyzed_count);
+        rap_info!(
+            "Completed Function Summary for {} functions",
+            analyzed_count
+        );
 
         // worklist+fixpoint, inline callee summary into caller summary
         self.construct_function_summary(&mut program_func_summary);
@@ -32,7 +35,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
             worklist.push(func_def_id.clone());
         }
 
-        while !worklist.is_empty() {    
+        while !worklist.is_empty() {
             let func_def_id = worklist.pop().unwrap();
             let _func_lock_info = self.program_lock_info.function_lock_infos.get(&func_def_id);
             if _func_lock_info.is_none() {
@@ -52,11 +55,14 @@ impl<'tcx> DeadlockDetection<'tcx> {
             //     // Inline call site summary ( M1 and M2 )
             //     // let callee_summary = program_func_summary.function_summaries.get(callee_def_id).unwrap();
             // }
-
         }
     }
 
-    fn construct_single_function_summary(&self, func_def_id: DefId, program_func_summary: &mut ProgramFuncSummary) {
+    fn construct_single_function_summary(
+        &self,
+        func_def_id: DefId,
+        program_func_summary: &mut ProgramFuncSummary,
+    ) {
         /* filter const mir */
         if let Some(_other) = self.tcx.hir().body_const_context(func_def_id) {
             return;
@@ -67,8 +73,16 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         let mut function_summary = FunctionSummary::new();
 
-        let func_lock_info = self.program_lock_info.function_lock_infos.get(&func_def_id).unwrap();
-        let func_isr_info = self.program_isr_info.function_interrupt_infos.get(&func_def_id).unwrap();
+        let func_lock_info = self
+            .program_lock_info
+            .function_lock_infos
+            .get(&func_def_id)
+            .unwrap();
+        let func_isr_info = self
+            .program_isr_info
+            .function_interrupt_infos
+            .get(&func_def_id)
+            .unwrap();
         for lock_site in func_lock_info.lock_sites.iter() {
             if lock_site.bb_index.is_none() {
                 rap_error!("lock_site.bb_index is none {:?}", lock_site);
@@ -81,19 +95,35 @@ impl<'tcx> DeadlockDetection<'tcx> {
             // IE, we ignore the possibility of regular edge caused deadlock.
 
             // FIXME
-            let lock_set = func_lock_info.bb_locksets.get(&lock_site.bb_index.unwrap()).unwrap();
-            let interrupt_set = func_isr_info.bb_interruptsets.get(&lock_site.bb_index.unwrap()).unwrap();
+            let lock_set = func_lock_info
+                .bb_locksets
+                .get(&lock_site.bb_index.unwrap())
+                .unwrap();
+            let interrupt_set = func_isr_info
+                .bb_interruptsets
+                .get(&lock_site.bb_index.unwrap())
+                .unwrap();
 
-            function_summary.preempt_summary.insert(lock_site.clone(), interrupt_set.clone());
-            function_summary.locking_summary.insert(lock_site.clone(), lock_set.clone());
+            function_summary
+                .preempt_summary
+                .insert(lock_site.clone(), interrupt_set.clone());
+            function_summary
+                .locking_summary
+                .insert(lock_site.clone(), lock_set.clone());
         }
 
         for interrupt_enable_site in func_isr_info.interrupt_enable_sites.iter() {
             if interrupt_enable_site.bb_index.is_none() {
-                rap_error!("interrupt_enable_site.bb_index is none {:?}", interrupt_enable_site);
+                rap_error!(
+                    "interrupt_enable_site.bb_index is none {:?}",
+                    interrupt_enable_site
+                );
                 continue;
             }
-            let lock_set = func_lock_info.bb_locksets.get(&interrupt_enable_site.bb_index.unwrap()).unwrap();
+            let lock_set = func_lock_info
+                .bb_locksets
+                .get(&interrupt_enable_site.bb_index.unwrap())
+                .unwrap();
             for _lock_def_id in lock_set.get_must_hold_locks() {
                 // TODO:
                 // this lock is acquired at some locksite (o, s')
@@ -102,7 +132,9 @@ impl<'tcx> DeadlockDetection<'tcx> {
         }
 
         // Update program_func_summary
-        program_func_summary.function_summaries.insert(func_def_id, function_summary);
+        program_func_summary
+            .function_summaries
+            .insert(func_def_id, function_summary);
     }
 
     pub fn print_function_summary_result(&self) {
@@ -117,15 +149,26 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
             rap_info!(" MustNotBePreemptedBy:");
             for (lock_site, interrupt_set) in &func_info.preempt_summary {
-                rap_info!("  LockSite: {:?}, ISRs: {:?}", lock_site.bb_index, interrupt_set.get_disabled_isrs());
+                rap_info!(
+                    "  LockSite: {:?}, ISRs: {:?}",
+                    lock_site.bb_index,
+                    interrupt_set.get_disabled_isrs()
+                );
             }
 
             rap_info!(" MustHaveUnlocked:");
             for (lock_site, lock_set) in &func_info.locking_summary {
-                rap_info!("  LockSite: {:?}, Locks: {:?}", lock_site.bb_index, lock_set.get_must_not_hold_locks());
+                rap_info!(
+                    "  LockSite: {:?}, Locks: {:?}",
+                    lock_site.bb_index,
+                    lock_set.get_must_not_hold_locks()
+                );
             }
             summary_count += 1;
         }
-        rap_info!("==== Function Summary Results End ({} non-trivial functions) ====", summary_count);
+        rap_info!(
+            "==== Function Summary Results End ({} non-trivial functions) ====",
+            summary_count
+        );
     }
 }

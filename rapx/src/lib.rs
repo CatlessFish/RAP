@@ -16,16 +16,18 @@ extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_target;
-
+extern crate stable_mir;
+use crate::analysis::core::heap_item::TypeAnalysis;
 use crate::analysis::deadlock::DeadlockDetection;
-use analysis::api_dep::ApiDep;
 use analysis::core::alias::mop::MopAlias;
+use analysis::core::api_dep::ApiDep;
 use analysis::core::call_graph::CallGraph;
 use analysis::core::dataflow::DataFlow;
+use analysis::core::range_analysis::SSATrans;
 use analysis::opt::Opt;
 use analysis::rcanary::rCanary;
 use analysis::safedrop::SafeDrop;
-use analysis::senryx::SenryxCheck;
+use analysis::senryx::{CheckLevel, SenryxCheck};
 use analysis::unsafety_isolation::{UigInstruction, UnsafetyIsolationCheck};
 use analysis::utils::show_mir::ShowMir;
 use rustc_data_structures::sync::Lrc;
@@ -47,7 +49,8 @@ pub type Elapsed = (i64, i64);
 pub struct RapCallback {
     rcanary: bool,
     safedrop: bool,
-    annotation: bool,
+    verify: bool,
+    infer: bool,
     unsafety_isolation: usize,
     mop: bool,
     callgraph: bool,
@@ -56,14 +59,18 @@ pub struct RapCallback {
     dataflow: usize,
     opt: bool,
     deadlock: bool,
+    heap_item: bool,
+    ssa: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RapCallback {
     fn default() -> Self {
         Self {
             rcanary: false,
             safedrop: false,
-            annotation: false,
+            verify: false,
+            infer: false,
             unsafety_isolation: 0,
             mop: false,
             callgraph: false,
@@ -72,6 +79,8 @@ impl Default for RapCallback {
             dataflow: 0,
             opt: false,
             deadlock: false,
+            heap_item: false,
+            ssa: false,
         }
     }
 }
@@ -148,12 +157,20 @@ impl RapCallback {
         self.api_dep
     }
 
-    pub fn enable_annotation(&mut self) {
-        self.annotation = true;
+    pub fn enable_verify(&mut self) {
+        self.verify = true;
     }
 
-    pub fn is_annotation_enabled(&self) -> bool {
-        self.annotation
+    pub fn is_verify_enabled(&self) -> bool {
+        self.verify
+    }
+
+    pub fn enable_infer(&mut self) {
+        self.infer = true;
+    }
+
+    pub fn is_infer_enabled(&self) -> bool {
+        self.infer
     }
 
     pub fn enable_callgraph(&mut self) {
@@ -195,6 +212,20 @@ impl RapCallback {
     pub fn is_deadlock_enabled(self) -> bool {
         self.deadlock
     }
+
+    pub fn enable_heap_item(&mut self) {
+        self.heap_item = true;
+    }
+
+    pub fn is_heap_item_enabled(self) -> bool {
+        self.heap_item
+    }
+    pub fn enable_ssa_transform(&mut self) {
+        self.ssa = true;
+    }
+    pub fn is_ssa_transform_enabled(self) -> bool {
+        self.ssa
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -203,31 +234,6 @@ pub enum RapPhase {
     Cargo,
     Rustc,
     LLVM, // unimplemented yet
-}
-
-/// Returns the "default sysroot" that RAP will use if no `--sysroot` flag is set.
-/// Should be a compile-time constant.
-pub fn compile_time_sysroot() -> Option<String> {
-    // Optionally inspects an environment variable at compile time.
-    if option_env!("RUSTC_STAGE").is_some() {
-        // This is being built as part of rustc, and gets shipped with rustup.
-        // We can rely on the sysroot computation in rustc.
-        return None;
-    }
-    // For builds outside rustc, we need to ensure that we got a sysroot
-    // that gets used as a default.  The sysroot computation in librustc_session would
-    // end up somewhere in the build dir (see `get_or_default_sysroot`).
-    // Taken from PR <https://github.com/Manishearth/rust-clippy/pull/911>.
-    let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
-    let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
-    let env = if home.is_some() && toolchain.is_some() {
-        format!("{}/toolchains/{}", home.unwrap(), toolchain.unwrap())
-    } else {
-        option_env!("RUST_SYSROOT")
-            .expect("To build RAPx without rustup, set the `RUST_SYSROOT` env var at build time")
-            .to_string()
-    };
-    Some(env)
 }
 
 pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
@@ -247,6 +253,14 @@ pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
         SafeDrop::new(tcx).start();
     }
 
+    if callback.is_heap_item_enabled() {
+        let rcx_boxed = Box::new(rCanary::new(tcx));
+        let rcx = Box::leak(rcx_boxed);
+        let mut type_analysis = TypeAnalysis::new(rcx);
+        type_analysis.start();
+        type_analysis.output();
+    }
+
     let x = callback.is_unsafety_isolation_enabled();
     match x {
         1 => UnsafetyIsolationCheck::new(tcx).start(UigInstruction::StdSp),
@@ -256,8 +270,14 @@ pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
         _ => {}
     }
 
-    if callback.is_annotation_enabled() {
-        SenryxCheck::new(tcx, 2).start();
+    if callback.is_verify_enabled() {
+        let check_level = CheckLevel::High;
+        SenryxCheck::new(tcx, 2).start(check_level, true);
+    }
+
+    if callback.is_infer_enabled() {
+        let check_level = CheckLevel::High;
+        SenryxCheck::new(tcx, 2).start(check_level, false);
     }
 
     if callback.is_show_mir_enabled() {
@@ -284,5 +304,8 @@ pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
 
     if callback.is_deadlock_enabled() {
         DeadlockDetection::new(tcx).start();
+    }
+    if callback.is_ssa_transform_enabled() {
+        SSATrans::new(tcx, false).start();
     }
 }

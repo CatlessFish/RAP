@@ -15,33 +15,46 @@ cargo +nightly-2024-10-12 install rapx --git https://github.com/Artisan-Lab/RAPx
 
 ## Usage
 
-Navigate to your Rust project folder containing a `Cargo.toml` file. Then run `cargo-rapx` with [toolchain override shorthand syntax].
-
-[toolchain override shorthand syntax]: https://rust-lang.github.io/rustup/overrides.html#toolchain-override-shorthand
+Navigate to your Rust project folder containing a `Cargo.toml` file. Then run `rapx` by manually specifying the toolchain version according to the [toolchain override shorthand syntax](https://rust-lang.github.io/rustup/overrides.html#toolchain-override-shorthand).
 
 ```shell
-cargo rapx [rapx options] -- [cargo check options]
-
-where `-- [cargo check options]` is optional, and if specified, they are passed to cargo check.
+cargo +nightly-2024-10-12 rapx [rapx options] -- [cargo check options]
 ```
 
-Alternatively, you can switch to the pinned toolchain ahead of time:
-
-```rust
-# set up rapx's toolchain as default
+or by setting up default toolchain to the required version.
+```shell
 rustup default nightly-2024-10-12
-
-# run cargo rapx without +toolchain syntax any more
-cargo rapx [rapx options] -- [cargo check options]
 ```
 
 Check out supported options with `-help`:
 
 ```shell
-cargo +nightly-2024-10-12 rapx -help
+cargo rapx -help
+
+Usage:
+    cargo rapx [rapx options] -- [cargo check options]
+
+RAPx Options:
+
+Application:
+    -F or -uaf      use-after-free/double free detection.
+    -M or -mleak    memory leakage detection.
+    -O or -opt      automatically detect code optimization chances.
+    -I or -infer    (under development) infer the safety properties required by unsafe APIs.
+    -V or -verify   (under development) verify if the safety requirements of unsafe API are satisfied.
+
+Analysis:
+    -alias          perform alias analysis (meet-over-paths)
+    -adg            generate API dependency graphs
+    -callgraph      generate callgraphs
+    -dataflow       (not supported yet) generate dataflow graphs
+    -heap           analyze if the type holds a piece of memory on heap
+    -audit          (under development) generate unsafe code audit units
 ```
 
-Environment variables (Values are case insensitive):
+If RAPx gets stuck after executing `cargo clean`, try manually downloading metadata dependencies by running `cargo metadata`. 
+
+RAPx supports the following environment variables (values are case insensitive):
 
 | var             | default when absent | one of these values | description                  |
 |-----------------|---------------------|---------------------|------------------------------|
@@ -54,44 +67,6 @@ For `RAP_RECURSIVE`:
 * shallow: check for current workpace members
 * deep: check for all workspaces from current folder
  
-NOTE: for shallow or deep, rapx will enter each member folder to do the check.
+NOTE: rapx will enter each member folder to do the check.
 
-### Use-After-Free Detection
-Detect bugs such as use-after-free and double free in Rust crates caused by unsafe code.
-```shell
-cargo +nightly-2024-10-12 rapx -uaf
-```
-
-If RAPx gets stuck after executing `cargo clean`, try manually downloading metadata dependencies by running `cargo metadata`.
-
-The feature is based on our SafeDrop paper, which was published in TOSEM.  
-```
-@article{cui2023safedrop,
-  title={SafeDrop: Detecting memory deallocation bugs of rust programs via static data-flow analysis},
-  author={Mohan Cui, Chengjun Chen, Hui Xu, and Yangfan Zhou},
-  journal={ACM Transactions on Software Engineering and Methodology},
-  volume={32},
-  number={4},
-  pages={1--21},
-  year={2023},
-  publisher={ACM New York, NY, USA}
-}
-```
-
-### Memory Leakage Detection 
-Detect memory leakage bugs caused by apis like [ManuallyDrop](https://doc.rust-lang.org/std/mem/struct.ManuallyDrop.html) and [into_raw()](https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw).
-
-```shell
-cargo +nightly-2024-10-12 rapx -mleak
-```
-
-The feature is based on our rCanary work, which was published in TSE
-```
-@article{cui2024rcanary,
-  title={rCanary: rCanary: Detecting memory leaks across semi-automated memory management boundary in Rust},
-  author={Mohan Cui, Hongliang Tian, Hui Xu, and Yangfan Zhou},
-  journal={IEEE Transactions on Software Engineering},
-  year={2024},
-}
-```
 

@@ -13,6 +13,7 @@ use crate::utils::log::{
 };
 use annotate_snippets::{Level, Renderer, Snippet};
 
+use super::super::super::NO_STD;
 static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
 
 struct DefPaths {
@@ -21,8 +22,15 @@ struct DefPaths {
 
 impl DefPaths {
     pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            vec_push: DefPath::new("std::vec::Vec::push", tcx),
+        let no_std = NO_STD.lock().unwrap();
+        if *no_std {
+            Self {
+                vec_push: DefPath::new("alloc::vec::Vec::push", tcx),
+            }
+        } else {
+            Self {
+                vec_push: DefPath::new("std::vec::Vec::push", tcx),
+            }
         }
     }
 }
@@ -61,7 +69,11 @@ impl<'tcx> intravisit::Visitor<'tcx> for LoopFinder<'tcx> {
                 record: Vec::new(),
             };
             intravisit::walk_block(&mut push_finder, block);
-            if !push_finder.record.is_empty() {
+            // if !push_finder.record.is_empty() {
+            //     self.record.push((ex.span, push_finder.record));
+            // }
+            if push_finder.record.len() == 1 {
+                // we only use simple cases
                 self.record.push((ex.span, push_finder.record));
             }
         }

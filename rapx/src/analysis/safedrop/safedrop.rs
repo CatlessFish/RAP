@@ -1,11 +1,12 @@
+use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::Operand::{Constant, Copy, Move};
 use rustc_middle::mir::{Operand, Place, TerminatorKind};
 use rustc_middle::ty::{TyCtxt, TyKind};
+use std::collections::{HashMap, HashSet};
 
 use crate::analysis::core::alias::FnMap;
 use crate::analysis::safedrop::SafeDropGraph;
 use crate::rap_error;
-use rustc_data_structures::fx::FxHashSet;
 
 pub const VISIT_LIMIT: usize = 1000;
 
@@ -257,105 +258,149 @@ impl<'tcx> SafeDropGraph<'tcx> {
             return;
         }
 
+        let mut order = vec![];
+        order.push(vec![]);
+
         /* Handle cases if the current block is a merged scc block with sub block */
-        if cur_block.scc_sub_blocks.len() > 0 {
-            for i in cur_block.scc_sub_blocks.clone() {
-                self.alias_bb(i, tcx);
-                self.alias_bbcall(i, tcx, fn_map);
-                self.drop_check(i, tcx);
+        if !cur_block.scc_sub_blocks.is_empty() {
+            match std::env::var_os("FAST_ALIAS") {
+                Some(_) => {
+                    order.push(cur_block.scc_sub_blocks.clone());
+                }
+                _ => {
+                    self.calculate_scc_order(
+                        &mut cur_block.scc_sub_blocks.clone(),
+                        &mut vec![],
+                        &mut order,
+                        &mut HashMap::new(),
+                        bb_index,
+                        bb_index,
+                        &mut HashSet::new(),
+                    );
+                }
             }
         }
 
-        /* Reach a leaf node, check bugs */
-        match cur_block.next.len() {
-            0 => {
-                // check the bugs.
-                if Self::should_check(self.def_id) {
-                    self.dp_check(&cur_block);
-                }
-                return;
-            }
-            1 => {
-                /*
-                 * Equivalent to self.check(cur_block.next[0]..);
-                 * We cannot use [0] for FxHashSet.
-                 */
-                for next in cur_block.next {
-                    self.check(next, tcx, fn_map);
-                }
-                return;
-            }
-            _ => { // multiple blocks
-            }
-        }
+        let backup_values = self.values.clone(); // duplicate the status when visiting different paths;
+        let backup_constant = self.constant.clone();
+        let backup_alias_set = self.alias_set.clone();
+        for scc_each in order {
+            self.alias_set = backup_alias_set.clone();
+            self.values = backup_values.clone();
+            self.constant = backup_constant.clone();
 
-        /* Begin: handle the SwitchInt statement. */
-        let mut single_target = false;
-        let mut sw_val = 0;
-        let mut sw_target = 0; // Single target
-        let mut path_discr_id = 0; // To avoid analyzing paths that cannot be reached with one enum type.
-        let mut sw_targets = None; // Multiple targets of SwitchInt
-        if !cur_block.switch_stmts.is_empty() && cur_block.scc_sub_blocks.is_empty() {
-            if let TerminatorKind::SwitchInt {
-                ref discr,
-                ref targets,
-            } = cur_block.switch_stmts[0].clone().kind
-            {
-                match discr {
-                    Copy(p) | Move(p) => {
-                        let place = self.projection(tcx, false, p.clone());
-                        if let Some(constant) = self.constant.get(&self.values[place].index) {
+            if !scc_each.is_empty() {
+                for idx in scc_each {
+                    self.alias_bb(idx, tcx);
+                    self.alias_bbcall(idx, tcx, fn_map);
+                }
+            }
+
+            let cur_block = cur_block.clone();
+            /* Reach a leaf node, check bugs */
+            match cur_block.next.len() {
+                0 => {
+                    if Self::should_check(self.def_id) {
+                        self.dp_check(&cur_block);
+                    }
+                    return;
+                }
+                1 => {
+                    /*
+                     * Equivalent to self.check(cur_block.next[0]..);
+                     * We cannot use [0] for FxHashSet.
+                     */
+                    for next in cur_block.next {
+                        self.check(next, tcx, fn_map);
+                    }
+                    return;
+                }
+                _ => { // multiple blocks
+                }
+            }
+
+            /* Begin: handle the SwitchInt statement. */
+            let mut single_target = false;
+            let mut sw_val = 0;
+            let mut sw_target = 0; // Single target
+            let mut path_discr_id = 0; // To avoid analyzing paths that cannot be reached with one enum type.
+            let mut sw_targets = None; // Multiple targets of SwitchInt
+            if !cur_block.switch_stmts.is_empty() && cur_block.scc_sub_blocks.is_empty() {
+                if let TerminatorKind::SwitchInt {
+                    ref discr,
+                    ref targets,
+                } = cur_block.switch_stmts[0].clone().kind
+                {
+                    match discr {
+                        Copy(p) | Move(p) => {
+                            let place = self.projection(tcx, false, *p);
+                            if let Some(father) = self.disc_map.get(&self.values[place].local) {
+                                if let Some(constant) = self.constant.get(father) {
+                                    if *constant != usize::MAX {
+                                        single_target = true;
+                                        sw_val = *constant;
+                                    }
+                                }
+                                if self.values[place].local == place {
+                                    path_discr_id = *father;
+                                    sw_targets = Some(targets.clone());
+                                }
+                            }
+                        }
+                        Constant(c) => {
                             single_target = true;
-                            sw_val = *constant;
-                        }
-                        if self.values[place].index != place {
-                            path_discr_id = self.values[place].index;
-                            sw_targets = Some(targets.clone());
-                        }
-                    }
-                    Constant(c) => {
-                        single_target = true;
-                        let param_env = tcx.param_env(self.def_id);
-                        if let Some(val) = c.const_.try_eval_target_usize(tcx, param_env) {
-                            sw_val = val as usize;
+                            let param_env = self.tcx.param_env(self.def_id);
+                            if let Some(val) = c.const_.try_eval_target_usize(self.tcx, param_env) {
+                                sw_val = val as usize;
+                            }
                         }
                     }
-                }
-                if single_target {
-                    /* Find the target based on the value;
-                     * Since sw_val is a const, only one target is reachable.
-                     * Filed 0 is the value; field 1 is the real target.
-                     */
-                    for iter in targets.iter() {
-                        if iter.0 as usize == sw_val as usize {
-                            sw_target = iter.1.as_usize();
-                            break;
+                    if single_target {
+                        /* Find the target based on the value;
+                         * Since sw_val is a const, only one target is reachable.
+                         * Filed 0 is the value; field 1 is the real target.
+                         */
+                        for iter in targets.iter() {
+                            if iter.0 as usize == sw_val {
+                                sw_target = iter.1.as_usize();
+                                break;
+                            }
                         }
-                    }
-                    /* No target found, choose the default target.
-                     * The default targets is not included within the iterator.
-                     * We can only obtain the default target based on the last item of all_targets().
-                     */
-                    if sw_target == 0 {
-                        let all_target = targets.all_targets();
-                        sw_target = all_target[all_target.len() - 1].as_usize();
+                        /* No target found, choose the default target.
+                         * The default targets is not included within the iterator.
+                         * We can only obtain the default target based on the last item of all_targets().
+                         */
+                        if sw_target == 0 {
+                            let all_target = targets.all_targets();
+                            sw_target = all_target[all_target.len() - 1].as_usize();
+                        }
                     }
                 }
             }
-        }
-        /* End: finish handling SwitchInt */
-        // fixed path since a constant switchInt value
-        if single_target {
-            self.check(sw_target, tcx, fn_map);
-        } else {
-            // Other cases in switchInt terminators
-            if let Some(targets) = sw_targets {
-                for iter in targets.iter() {
-                    if self.visit_times > VISIT_LIMIT {
-                        continue;
+            /* End: finish handling SwitchInt */
+            // fixed path since a constant switchInt value
+            if single_target {
+                self.check(sw_target, tcx, fn_map);
+            } else {
+                // Other cases in switchInt terminators
+                if let Some(targets) = sw_targets {
+                    for iter in targets.iter() {
+                        if self.visit_times > VISIT_LIMIT {
+                            continue;
+                        }
+                        let next_index = iter.1.as_usize();
+                        let path_discr_val = iter.0 as usize;
+                        self.split_check_with_cond(
+                            next_index,
+                            path_discr_id,
+                            path_discr_val,
+                            tcx,
+                            fn_map,
+                        );
                     }
-                    let next_index = iter.1.as_usize();
-                    let path_discr_val = iter.0 as usize;
+                    let all_targets = targets.all_targets();
+                    let next_index = all_targets[all_targets.len() - 1].as_usize();
+                    let path_discr_val = usize::MAX; // to indicate the default path;
                     self.split_check_with_cond(
                         next_index,
                         path_discr_id,
@@ -363,20 +408,140 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         tcx,
                         fn_map,
                     );
-                }
-                let all_targets = targets.all_targets();
-                let next_index = all_targets[all_targets.len() - 1].as_usize();
-                let path_discr_val = usize::MAX; // to indicate the default path;
-                self.split_check_with_cond(next_index, path_discr_id, path_discr_val, tcx, fn_map);
-            } else {
-                for i in cur_block.next {
-                    if self.visit_times > VISIT_LIMIT {
-                        continue;
+                } else {
+                    for i in cur_block.next {
+                        if self.visit_times > VISIT_LIMIT {
+                            continue;
+                        }
+                        let next_index = i;
+                        self.split_check(next_index, tcx, fn_map);
                     }
-                    let next_index = i;
-                    self.split_check(next_index, tcx, fn_map);
                 }
             }
         }
+    }
+
+    pub fn calculate_scc_order(
+        &mut self,
+        scc: &Vec<usize>,
+        path: &mut Vec<usize>,
+        ans: &mut Vec<Vec<usize>>,
+        disc_map: &mut HashMap<usize, usize>,
+        idx: usize,
+        root: usize,
+        visit: &mut HashSet<usize>,
+    ) {
+        if idx == root && !path.is_empty() {
+            ans.push(path.clone());
+            return;
+        }
+        visit.insert(idx);
+        let term = &self.terms[idx].clone();
+
+        match term {
+            TerminatorKind::SwitchInt {
+                ref discr,
+                ref targets,
+            } => match discr {
+                Copy(p) | Move(p) => {
+                    let place = self.projection(self.tcx, false, *p);
+                    if let Some(father) = self.disc_map.get(&self.values[place].local) {
+                        let father = *father;
+                        if let Some(constant) = disc_map.get(&father) {
+                            let constant = *constant;
+                            for t in targets.iter() {
+                                if t.0 as usize == constant {
+                                    let target = t.1.as_usize();
+                                    if path.contains(&target) {
+                                        continue;
+                                    }
+                                    path.push(target);
+                                    self.calculate_scc_order(
+                                        scc, path, ans, disc_map, target, root, visit,
+                                    );
+                                    path.pop();
+                                }
+                            }
+                        } else {
+                            for t in targets.iter() {
+                                let constant = t.0 as usize;
+                                let target = t.1.as_usize();
+                                if path.contains(&target) {
+                                    continue;
+                                }
+                                path.push(target);
+                                disc_map.insert(father, constant);
+                                self.calculate_scc_order(
+                                    scc, path, ans, disc_map, target, root, visit,
+                                );
+                                disc_map.remove(&father);
+                                path.pop();
+                            }
+                        }
+                    } else {
+                        if let Some(constant) = disc_map.get(&place) {
+                            let constant = *constant;
+                            for t in targets.iter() {
+                                if t.0 as usize == constant {
+                                    let target = t.1.as_usize();
+                                    if path.contains(&target) {
+                                        continue;
+                                    }
+                                    path.push(target);
+                                    self.calculate_scc_order(
+                                        scc, path, ans, disc_map, target, root, visit,
+                                    );
+                                    path.pop();
+                                }
+                            }
+                        } else {
+                            for t in targets.iter() {
+                                let constant = t.0 as usize;
+                                let target = t.1.as_usize();
+                                if path.contains(&target) {
+                                    continue;
+                                }
+                                path.push(target);
+                                disc_map.insert(place, constant);
+                                self.calculate_scc_order(
+                                    scc, path, ans, disc_map, target, root, visit,
+                                );
+                                disc_map.remove(&place);
+                                path.pop();
+                            }
+
+                            let constant = targets.iter().len();
+                            let target = targets.otherwise().as_usize();
+                            if !path.contains(&target) {
+                                path.push(target);
+                                disc_map.insert(place, constant);
+                                self.calculate_scc_order(
+                                    scc, path, ans, disc_map, target, root, visit,
+                                );
+                                disc_map.remove(&place);
+                                path.pop();
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {
+                for bidx in self.blocks[idx].next.clone() {
+                    if !scc.contains(&bidx) && bidx != root {
+                        continue;
+                    }
+                    if bidx != root {
+                        path.push(bidx);
+                        self.calculate_scc_order(scc, path, ans, disc_map, bidx, root, visit);
+                        path.pop();
+                    } else {
+                        self.calculate_scc_order(scc, path, ans, disc_map, bidx, root, visit);
+                    }
+                }
+            }
+        }
+
+        visit.remove(&idx);
     }
 }

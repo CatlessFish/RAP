@@ -1,6 +1,7 @@
 pub mod ownership;
 pub mod type_visitor;
 
+use rustc_middle::ty::EarlyBinder;
 use rustc_middle::ty::TypeVisitable;
 use rustc_middle::ty::{self, Ty, TyCtxt, TyKind};
 use rustc_span::def_id::DefId;
@@ -8,9 +9,11 @@ use rustc_target::abi::VariantIdx;
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+
 //use stopwatch::Stopwatch;
 use crate::analysis::core::heap_item::ownership::OwnershipLayoutResult;
 use crate::analysis::rcanary::{rCanary, RcxMut};
+use crate::rap_info;
 use ownership::RawTypeOwner;
 
 type TyMap<'tcx> = HashMap<Ty<'tcx>, String>;
@@ -88,6 +91,32 @@ impl<'tcx, 'a> TypeAnalysis<'tcx, 'a> {
         //rap_info!("Tymap Sum:{:?}", self.ty_map().len());
         //rap_info!("@@@@@@@@@@@@@Type Analysis:{:?}", sw.elapsed_ms());
         //sw.stop();
+    }
+
+    pub fn format_owner_unit(unit: &OwnerUnit) -> String {
+        let (owner, flags) = unit;
+        let vec_str = flags
+            .iter()
+            .map(|&b| if b { "1" } else { "0" })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("({}, [{}])", owner, vec_str)
+    }
+
+    pub fn output(&mut self) {
+        for elem in self.adt_owner() {
+            let name = format!(
+                "{:?}",
+                EarlyBinder::skip_binder(self.rcx.tcx().type_of(*elem.0))
+            );
+            let owning = elem
+                .1
+                .iter()
+                .map(Self::format_owner_unit)
+                .collect::<Vec<_>>()
+                .join(", ");
+            rap_info!("{} {}", name, owning);
+        }
     }
 }
 

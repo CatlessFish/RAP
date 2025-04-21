@@ -3,22 +3,12 @@
 extern crate rustc_driver;
 extern crate rustc_session;
 
-use rapx::{
-    compile_time_sysroot, rap_info, rap_trace, utils::log::init_log, RapCallback, RAP_DEFAULT_ARGS,
-};
+use rapx::{rap_info, rap_trace, utils::log::init_log, RapCallback, RAP_DEFAULT_ARGS};
 use rustc_session::config::ErrorOutputType;
 use rustc_session::EarlyDiagCtxt;
 use std::env;
 
 fn run_complier(args: &mut Vec<String>, callback: &mut RapCallback) -> i32 {
-    if let Some(sysroot) = compile_time_sysroot() {
-        let sysroot_flag = "--sysroot";
-        if !args.iter().any(|e| e == sysroot_flag) {
-            // We need to overwrite the default that librustc_session would compute.
-            args.push(sysroot_flag.to_owned());
-            args.push(sysroot);
-        }
-    }
     // Finally, add the default flags all the way in the beginning, but after the binary name.
     args.splice(1..1, RAP_DEFAULT_ARGS.iter().map(ToString::to_string));
 
@@ -26,7 +16,7 @@ fn run_complier(args: &mut Vec<String>, callback: &mut RapCallback) -> i32 {
     rustc_driver::init_rustc_env_logger(&handler);
     rustc_driver::install_ice_hook("bug_report_url", |_| ());
 
-    let run_compiler = rustc_driver::RunCompiler::new(&args, callback);
+    let run_compiler = rustc_driver::RunCompiler::new(args, callback);
     let exit_code = rustc_driver::catch_with_exit_code(move || run_compiler.run());
     rap_trace!("The arg for compilation is {:?}", args);
 
@@ -41,21 +31,21 @@ fn main() {
         match arg.as_str() {
             "-F" | "-uaf" => compiler.enable_safedrop(),
             "-M" | "-mleak" => compiler.enable_rcanary(),
-            "-alias=mop" => compiler.enable_mop(),
+            "-I" | "-infer" => compiler.enable_infer(),
+            "-V" | "-verify" => compiler.enable_verify(),
+            "-O" | "-opt" => compiler.enable_opt(),
+            "-alias" => compiler.enable_mop(),
+            "-heap" => compiler.enable_heap_item(),
+            "-adg" => compiler.enable_api_dep(), // api dependency graph
+            "-callgraph" => compiler.enable_callgraph(),
             "-dataflow" => compiler.enable_dataflow(1),
+            "-ssa" => compiler.enable_ssa_transform(),
             "-dataflow=debug" => compiler.enable_dataflow(2),
-            "-stdsp" => compiler.enable_unsafety_isolation(1),
+            "-audit" => compiler.enable_unsafety_isolation(1),
             "-doc" => compiler.enable_unsafety_isolation(2),
             "-upg" => compiler.enable_unsafety_isolation(3),
             "-ucons" => compiler.enable_unsafety_isolation(4),
-            "-A" | "-spaa" => compiler.enable_annotation(),
-            "-callgraph" => compiler.enable_callgraph(),
-            "-O" | "-opt" => compiler.enable_opt(),
             "-mir" => compiler.enable_show_mir(),
-            "-api-dep" => compiler.enable_api_dep(),
-            "-adt" => {}
-            "-z3" => {}
-            "-meta" => {}
             "-deadlock" => compiler.enable_deadlock(),
             _ => args.push(arg),
         }

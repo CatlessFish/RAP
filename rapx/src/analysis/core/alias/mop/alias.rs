@@ -3,10 +3,10 @@ use super::types::*;
 use crate::analysis::core::alias::{FnMap, RetAlias};
 use crate::analysis::utils::intrinsic_id::*;
 use crate::{rap_debug, rap_error};
-use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Operand, Place, ProjectionElem, TerminatorKind};
 use rustc_middle::ty;
+use std::collections::HashSet;
 
 impl<'tcx> MopGraph<'tcx> {
     /* alias analysis for a single block */
@@ -40,7 +40,7 @@ impl<'tcx> MopGraph<'tcx> {
         &mut self,
         bb_index: usize,
         fn_map: &mut FnMap,
-        recursion_set: &mut FxHashSet<DefId>,
+        recursion_set: &mut HashSet<DefId>,
     ) {
         let cur_block = self.blocks[bb_index].clone();
         for call in cur_block.calls {
@@ -187,7 +187,6 @@ impl<'tcx> MopGraph<'tcx> {
     }
 
     //assign alias for a variable.
-    //TO FIX
     pub fn merge_alias(&mut self, lv: usize, rv: usize) {
         rap_debug!("alias set now: {:?}", self.alias_set);
         // println!("A:{:?} V:{:?}", self.alias_set, self.values.len());
@@ -272,7 +271,7 @@ impl<'tcx> MopGraph<'tcx> {
                 if self.values.len() == 1 {
                     return;
                 }
-                for idx in 1..self.alias_set.len() {
+                for idx in 1..self.values.len() {
                     if !self.union_is_same(idx, node.index) {
                         continue;
                     }
@@ -281,8 +280,18 @@ impl<'tcx> MopGraph<'tcx> {
                         && idx != node.index
                         && node.local != results_nodes[idx].local
                     {
-                        let left_node = node;
-                        let right_node = &results_nodes[idx];
+                        let left_node;
+                        let right_node;
+                        match results_nodes[idx].local {
+                            0 => {
+                                left_node = &results_nodes[idx];
+                                right_node = node;
+                            }
+                            _ => {
+                                left_node = node;
+                                right_node = &results_nodes[idx];
+                            }
+                        }
                         let mut new_alias = RetAlias::new(
                             left_node.local,
                             left_node.may_drop,

@@ -15,8 +15,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
         }
         let cur_block = self.blocks[bb_index].clone();
         for assign in cur_block.assignments {
-            let mut lv_aliaset_idx = self.projection(tcx, false, assign.lv.clone());
-            let rv_aliaset_idx = self.projection(tcx, true, assign.rv.clone());
+            let mut lv_aliaset_idx = self.projection(tcx, false, assign.lv);
+            let rv_aliaset_idx = self.projection(tcx, true, assign.rv);
             match assign.atype {
                 AssignType::Variant => {
                     self.alias_set[lv_aliaset_idx] = rv_aliaset_idx;
@@ -127,7 +127,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
     // assign to the variable _x, we will set the birth of _x and its child self.values a new birth.
     pub fn fill_birth(&mut self, node: usize, birth: isize) {
         self.values[node].birth = birth;
-        for i in 0..self.alias_set.len() {
+        for i in 0..self.values.len() {
             if self.union_is_same(i, node) && self.values[i].birth == -1 {
                 self.values[i].birth = birth;
             }
@@ -172,7 +172,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         node.birth = self.values[proj_id].birth;
                         node.field_id = field_idx;
                         self.values[proj_id].fields.insert(field_idx, node.index);
-                        self.alias_set.push(self.values.len());
+                        self.alias_set.push(self.alias_set.len());
                         self.dead_record.push(false);
                         self.values.push(node);
                     }
@@ -192,8 +192,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
         // } else {
         //     self.values[lv].alias = self.values[rv].alias.clone();
         // }
+        if lv > self.values.len() || rv > self.values.len() {
+            return;
+        }
         self.union_merge(lv, rv);
-
         for field in self.values[rv].fields.clone().into_iter() {
             if !self.values[lv].fields.contains_key(&field.0) {
                 let mut node = ValueNode::new(
@@ -206,7 +208,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 node.birth = self.values[lv].birth;
                 node.field_id = field.0;
                 self.values[lv].fields.insert(field.0, node.index);
-                self.alias_set.push(self.values.len());
+                self.alias_set.push(self.alias_set.len());
                 self.dead_record.push(false);
                 self.values.push(node);
             }
@@ -234,7 +236,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 node.birth = self.values[lv].birth;
                 node.field_id = *index;
                 self.values[lv].fields.insert(*index, node.index);
-                self.alias_set.push(self.values.len());
+                self.alias_set.push(self.alias_set.len());
                 self.dead_record.push(false);
                 self.values.push(node);
             }
@@ -249,7 +251,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
             if !self.values[rv].fields.contains_key(&index) {
                 let need_drop = ret_alias.right_need_drop;
                 let may_drop = ret_alias.right_may_drop;
-                let mut node = ValueNode::new(self.values.len(), right_init, need_drop, may_drop);
+                let mut node =
+                    ValueNode::new(self.alias_set.len(), right_init, need_drop, may_drop);
                 node.kind = TyKind::RawPtr;
                 node.birth = self.values[rv].birth;
                 node.field_id = *index;
@@ -263,7 +266,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         self.merge_alias(lv, rv);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn union_find(&mut self, e: usize) -> usize {
         let mut r = e;
         while self.alias_set[r] != r {
@@ -272,7 +275,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         r
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn union_merge(&mut self, e1: usize, e2: usize) {
         let f1 = self.union_find(e1);
         let f2 = self.union_find(e2);
@@ -289,13 +292,14 @@ impl<'tcx> SafeDropGraph<'tcx> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn union_is_same(&mut self, e1: usize, e2: usize) -> bool {
         let f1 = self.union_find(e1);
         let f2 = self.union_find(e2);
         f1 == f2
     }
 
+    #[inline(always)]
     pub fn union_has_alias(&mut self, e: usize) -> bool {
         for i in 0..self.alias_set.len() {
             if i == e {

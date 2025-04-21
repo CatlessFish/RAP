@@ -43,22 +43,29 @@ impl GraphNode {
             assert!(self.ops.len() == 1);
             match self.ops[0] {
                 NodeOp::Nop => {
-                    write!(attr, "label=\"\" style=dashed ").unwrap();
+                    write!(attr, "label=\"{:?} ", local).unwrap();
                 }
-                NodeOp::Const(ref name) => {
+                NodeOp::Const(ref src_desc, ref src_ty) => {
                     write!(
                         attr,
-                        "label=\"<f0> {}\" style=dashed ",
-                        escaped_string(name.clone())
+                        "label=\"<f0> {:?} {} {} ",
+                        local,
+                        escaped_string(src_desc.clone()),
+                        escaped_string(src_ty.clone()),
                     )
                     .unwrap();
                 }
+                NodeOp::Use => {
+                    // only exists for _a[_b] =(Use) value
+                    write!(attr, "label=\"{:?} ", local).unwrap();
+                }
                 _ => {
-                    panic!("Wrong arm!");
+                    panic!("Wrong arm!  {:?} {:?}", local, self.ops[0]);
                 }
             }
+        } else {
+            write!(attr, "label=\"<f0> {:?} ", local).unwrap();
         }
-        write!(attr, "label=\"<f0> {:?} ", local).unwrap();
         let mut seq = 1;
         self.ops.iter().for_each(|op| {
             match op {
@@ -109,13 +116,16 @@ impl GraphNode {
             };
             seq += 1;
         });
-        write!(attr, "\"").unwrap();
+        write!(attr, "\" ").unwrap();
         match color {
             //color=xxx
             None => {}
             Some(color) => {
                 write!(attr, "color={} ", color).unwrap();
             }
+        }
+        if is_marker {
+            write!(attr, "style=dashed ").unwrap();
         }
         write!(dot, "{:?} [{}]", local, attr).unwrap();
         dot

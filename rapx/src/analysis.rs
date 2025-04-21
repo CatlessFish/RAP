@@ -1,4 +1,3 @@
-pub mod api_dep;
 pub mod core;
 pub mod deadlock;
 pub mod opt;

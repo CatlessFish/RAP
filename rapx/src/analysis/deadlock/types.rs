@@ -5,6 +5,11 @@ use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
 use rustc_middle::mir::{BasicBlock, BasicBlockData};
 
+extern crate rustc_mir_dataflow;
+use rustc_mir_dataflow::{
+    JoinSemiLattice, // 用于LockSet和InterruptSet的合并操作
+};
+
 // 表示一个锁对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LockObject {
@@ -231,6 +236,16 @@ impl InterruptSet {
 impl Display for InterruptSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Disabled: {:?}, Enabled: {:?}", self.get_disabled_isrs(), self.get_enabled_isrs())
+    }
+}
+
+impl JoinSemiLattice for InterruptSet {
+    fn join(&mut self, other: &Self) -> bool {
+        let old = self.clone();
+        self.merge(other);
+
+        // Return true if self has changed
+        return *self != old;
     }
 }
 

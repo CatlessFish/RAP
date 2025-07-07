@@ -40,6 +40,7 @@ petgraph = "0.7.0"
 
 # rustc_private, only for local development
 [dev-dependencies]
+rustc_mir_dataflow = { path = "../../symlink_rustc_src/rustc_mir_dataflow"}
 rustc_data_structures = { path = "../../symlink_rustc_src/rustc_data_structures"}
 rustc_driver = { path = "../../symlink_rustc_src/rustc_driver"}
 rustc_errors = { path = "../../symlink_rustc_src/rustc_errors"}

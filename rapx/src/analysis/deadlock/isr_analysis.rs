@@ -1,11 +1,68 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Body;
 
+extern crate rustc_mir_dataflow;
+use rustc_mir_dataflow::{ Analysis, AnalysisDomain };
+
 
 use crate::analysis::deadlock::*;
 use crate::{rap_info, rap_debug};
 // use crate::utils::source::get_fn_name;
 
+struct ISRAnalyzer {
+    analyzed_functions: HashMap<DefId, FunctionInterruptInfo>,
+}
+
+impl ISRAnalyzer {
+    pub fn new() -> Self {
+        ISRAnalyzer {
+            analyzed_functions: HashMap::new()
+        }
+    }
+}
+
+impl<'tcx> AnalysisDomain<'tcx> for ISRAnalyzer {
+    type Domain = InterruptSet;
+
+    const NAME: &'static str = "ISRAnalysis";
+
+    fn bottom_value(&self, body: &Body<'tcx>) -> <ISRAnalyzer as AnalysisDomain>::Domain {
+        InterruptSet::new()
+    }
+
+    fn initialize_start_block(&self, body: &rustc_middle::mir::Body<'tcx>, state: &mut <ISRAnalyzer as AnalysisDomain>::Domain) {
+        *state = InterruptSet::new()
+    }
+}
+
+impl<'tcx> Analysis<'tcx> for ISRAnalyzer {
+    fn apply_statement_effect(
+            &mut self,
+            state: &mut <ISRAnalyzer as AnalysisDomain>::Domain,
+            statement: &rustc_middle::mir::Statement<'tcx>,
+            location: rustc_middle::mir::Location,
+        ) {
+        
+    }
+
+    fn apply_terminator_effect<'mir>(
+            &mut self,
+            state: &mut <ISRAnalyzer as AnalysisDomain>::Domain,
+            terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
+            location: rustc_middle::mir::Location,
+        ) -> rustc_middle::mir::TerminatorEdges<'mir, 'tcx> {
+        rustc_middle::mir::TerminatorEdges::None
+    }
+
+    fn apply_call_return_effect(
+            &mut self,
+            state: &mut <ISRAnalyzer as AnalysisDomain>::Domain,
+            block: BasicBlock,
+            return_places: rustc_middle::mir::CallReturnPlaces<'_, 'tcx>,
+        ) {
+        
+    }
+}
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn isr_analysis(&mut self) {

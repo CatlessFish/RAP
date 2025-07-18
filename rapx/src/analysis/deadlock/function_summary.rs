@@ -69,7 +69,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         let mut function_summary = FunctionSummary::new();
 
         let func_lock_info = self.program_lock_info.function_lock_infos.get(&func_def_id).unwrap();
-        let func_isr_info = self.program_isr_info.function_interrupt_infos.get(&func_def_id).unwrap();
+        let func_isr_info = self.program_isr_info.func_irq_infos.get(&func_def_id).unwrap();
         for lock_site in func_lock_info.lock_sites.iter() {
             if lock_site.bb_index.is_none() {
                 rap_error!("lock_site.bb_index is none {:?}", lock_site);
@@ -83,7 +83,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
             // FIXME
             let lock_set = func_lock_info.bb_locksets.get(&lock_site.bb_index.unwrap()).unwrap();
-            let interrupt_set = func_isr_info.bb_interruptsets.get(&lock_site.bb_index.unwrap()).unwrap();
+            let interrupt_set = func_isr_info.bb_irq_states.get(&lock_site.bb_index.unwrap()).unwrap();
 
             function_summary.preempt_summary.insert(lock_site.clone(), interrupt_set.clone());
             function_summary.locking_summary.insert(lock_site.clone(), lock_set.clone());
@@ -116,9 +116,11 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
             rap_info!("Function {} summary:", self.tcx.def_path_str(def_id));
 
-            rap_info!(" MustNotBePreemptedBy:");
-            for (lock_site, interrupt_set) in &func_info.preempt_summary {
-                rap_info!("  LockSite: {:?}, ISRs: {:?}", lock_site.bb_index, interrupt_set.get_disabled_isrs());
+            rap_info!(" IrqDisabled:");
+            for (lock_site, irq_state) in &func_info.preempt_summary {
+                if *irq_state == IrqState::MustBeDisabled {
+                    rap_info!("  LockSite: {:?}", lock_site.bb_index);
+                }
             }
 
             rap_info!(" MustHaveUnlocked:");

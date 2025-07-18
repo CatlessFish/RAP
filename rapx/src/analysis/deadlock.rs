@@ -8,6 +8,7 @@ pub mod deadlock_detection;
 use rustc_middle::ty::TyCtxt;
 use std::collections::{HashMap, HashSet};
 use rustc_middle::mir::{BasicBlock, TerminatorKind};
+use rustc_hir::def_id::DefId;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::*;
@@ -18,6 +19,8 @@ pub struct DeadlockDetection<'tcx> {
     pub target_lock_apis: Vec<(&'tcx str, &'tcx str)>,
     pub target_isr_entries: Vec<&'tcx str>,
     pub target_interrupt_apis: Vec<(&'tcx str, InterruptApiType)>,
+    pub enable_interrupt_apis: Vec<DefId>,
+    pub disable_interrupt_apis: Vec<DefId>,
 
     program_lock_info: ProgramLockInfo,
     program_isr_info: ProgramIsrInfo,
@@ -62,6 +65,10 @@ impl<'tcx> DeadlockDetection<'tcx> {
                 ("arch::x86::irq::enable_local", InterruptApiType::Enable),
                 ("arch::x86::irq::disable_local", InterruptApiType::Disable),
             ],
+
+            enable_interrupt_apis: Vec::new(),
+            disable_interrupt_apis: Vec::new(),
+
             program_lock_info: ProgramLockInfo::new(),
             program_isr_info: ProgramIsrInfo::new(),
             program_func_summary: ProgramFuncSummary::new(),
@@ -86,15 +93,15 @@ impl<'tcx> DeadlockDetection<'tcx> {
         // TODO: consider alias
         // 2. Analysis LockSet
         self.lockset_analysis();
-        self.print_lockset_analysis_results();
+        // self.print_lockset_analysis_results();
 
         // 3. Computes Function Summary
         self.function_summary();
-        self.print_function_summary_result();
+        // self.print_function_summary_result();
 
         // 4. Construct Lock Graph
         self.construct_ilg();
-        self.print_ilg_result();
+        // self.print_ilg_result();
 
         // 5. Detect Cycles on Lock Graph
         self.detect_deadlock();

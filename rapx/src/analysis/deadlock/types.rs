@@ -6,9 +6,7 @@ use std::collections::{HashMap, HashSet};
 use rustc_middle::mir::{BasicBlock, BasicBlockData};
 
 extern crate rustc_mir_dataflow;
-use rustc_mir_dataflow::{
-    JoinSemiLattice, // 用于LockSet和InterruptSet的合并操作
-};
+use rustc_mir_dataflow::fmt::DebugWithContext;
 
 // 表示一个锁对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -177,99 +175,67 @@ impl ProgramLockInfo {
 }
 
 // ===== ISR =====
+
+/// 表示某个Program Point处的中断开关状态
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IsrState {
+pub enum IrqState {
     Bottom,
-    Disabled, // Must
-    Enabled, // May
+    MustBeDisabled, // Must
+    MayBeEnabled, // May
 }
 
-impl IsrState {
-    pub fn union(&self, other: &IsrState) -> IsrState {
-        match (self, other) {
-            (IsrState::Bottom, _) => other.clone(),
-            (_, IsrState::Bottom) => self.clone(),
-            (IsrState::Disabled, IsrState::Disabled) => IsrState::Disabled,
-            _ => IsrState::Enabled,
-        }
-    }
-}
-
-// 表示一个中断集
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterruptSet{
-    pub interrupt_states: HashMap<DefId, IsrState>,
-}
-
-impl InterruptSet {
+impl IrqState {
     pub fn new() -> Self {
-        InterruptSet { interrupt_states: HashMap::new() }
+        Self::Bottom
     }
 
-    pub fn merge(&mut self, other: &InterruptSet) {
-        for (isr_id, other_state) in other.interrupt_states.iter() {
-            if let Some(old_state) = self.interrupt_states.get_mut(isr_id) {
-                *old_state = old_state.union(other_state);
-            } else {
-                self.interrupt_states.insert(isr_id.clone(), other_state.clone());
-            }
+    /// Return a new IrqState of self U other
+    pub fn union(&self, other: &IrqState) -> IrqState {
+        match (self, other) {
+            (IrqState::Bottom, _) => other.clone(),
+            (_, IrqState::Bottom) => self.clone(),
+            (IrqState::MustBeDisabled, IrqState::MustBeDisabled) => IrqState::MustBeDisabled,
+            _ => IrqState::MayBeEnabled,
         }
     }
-
-    pub fn update_single_isr_state(&mut self, isr_id: DefId, state: IsrState) {
-        self.interrupt_states.insert(isr_id, state);
-    }
-
-    pub fn get_disabled_isrs(&self) -> Vec<DefId> {
-        self.interrupt_states.iter().filter(|(_, state)| **state == IsrState::Disabled).map(|(isr_id, _)| *isr_id).collect()
-    }
-
-    pub fn get_enabled_isrs(&self) -> Vec<DefId> {
-        self.interrupt_states.iter().filter(|(_, state)| **state == IsrState::Enabled).map(|(isr_id, _)| *isr_id).collect()
-    }
-    
-    pub fn is_all_bottom(&self) -> bool {
-        self.interrupt_states.iter().all(|(_, state)| *state == IsrState::Bottom)
-    }
 }
 
-impl Display for InterruptSet {
+impl Display for IrqState {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Disabled: {:?}, Enabled: {:?}", self.get_disabled_isrs(), self.get_enabled_isrs())
+        write!(f, "{:?}", self)
     }
 }
 
-impl JoinSemiLattice for InterruptSet {
-    fn join(&mut self, other: &Self) -> bool {
-        let old = self.clone();
-        self.merge(other);
+impl<C> DebugWithContext<C> for IrqState {}
 
-        // Return true if self has changed
-        return *self != old;
-    }
-}
-
-// 函数的ISR信息
+/// 表示某个函数中各个位置的中断开关状态
 #[derive(Debug, Clone)]
-pub struct FunctionInterruptInfo {
+pub struct FuncIrqInfo {
+    /// 函数的defId
     pub def_id: DefId,
-    pub exit_interruptset: InterruptSet,
-    pub bb_interruptsets: HashMap<BasicBlock, InterruptSet>,
+
+    /// 函数出口处的中断开关状态
+    pub exit_irq_state: IrqState,
+
+    /// 每个Basic Block结束位置的中断开关状态
+    pub bb_irq_states: HashMap<BasicBlock, IrqState>,
+
+    /// 开启中断的位置
     pub interrupt_enable_sites: Vec<OperationSite>,
 }
 
-impl PartialEq for FunctionInterruptInfo {
+impl PartialEq for FuncIrqInfo {
     fn eq(&self, other: &Self) -> bool {
         self.def_id == other.def_id &&
-        self.exit_interruptset == other.exit_interruptset &&
-        self.bb_interruptsets == other.bb_interruptsets &&
+        self.exit_irq_state == other.exit_irq_state &&
+        self.bb_irq_states == other.bb_irq_states &&
         self.interrupt_enable_sites == other.interrupt_enable_sites
     }
 }
 
-impl Display for FunctionInterruptInfo {
+impl Display for FuncIrqInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} BBs in total, Exit: {}", self.bb_interruptsets.len(), self.exit_interruptset)
+        write!(f, "{} BBs in total, Exit: {}", self.bb_irq_states.len(), self.exit_irq_state)
     }
 }
 
@@ -279,19 +245,27 @@ pub enum InterruptApiType {
     Enable,
 }
 
+/// The interrupt info of the whole program
 #[derive(Debug)]
 pub struct ProgramIsrInfo {
-    pub isr_entries: HashSet<DefId>, // 所有ISR入口函数(对应target_isr_entries)
-    pub isr_funcs: HashMap<DefId, Vec<DefId>>, // 所有ISR及其可能的调用者
-    pub function_interrupt_infos: HashMap<DefId, FunctionInterruptInfo>, // 每个函数的ISR信息
+    /// The `DefId`s of all the identified ISR ENTRY functions.
+    /// Corresponds to `DeadlockDetection.target_isr_entries`.
+    pub isr_entries: HashSet<DefId>, 
+
+    /// All possible callee (and recursively their callee)
+    /// of a ISR ENTRY function should be considered as a ISR function.
+    pub isr_funcs: HashSet<DefId>, 
+
+    /// The `FuncIrqInfo` of each function
+    pub func_irq_infos: HashMap<DefId, FuncIrqInfo>, 
 }
 
 impl ProgramIsrInfo {
     pub fn new() -> Self {
         ProgramIsrInfo {
             isr_entries: HashSet::new(),
-            isr_funcs: HashMap::new(),
-            function_interrupt_infos: HashMap::new(),
+            isr_funcs: HashSet::new(),
+            func_irq_infos: HashMap::new(),
         }
     }
 }
@@ -340,8 +314,8 @@ impl Display for OperationSite {
     }
 }
 
-// M1: Map<LockSite, InterruptSet>
-type PreemptSummary = HashMap<OperationSite, InterruptSet>;
+// M1: Map<LockSite, IrqState>
+type PreemptSummary = HashMap<OperationSite, IrqState>;
 
 // M2: Map<LockSite, LockSet>
 type LockingSummary = HashMap<OperationSite, LockSet>;

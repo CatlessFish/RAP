@@ -40,18 +40,18 @@ petgraph = "0.7.0"
 
 # rustc_private, only for local development
 [dev-dependencies]
-rustc_mir_dataflow = { path = "../../symlink_rustc_src/rustc_mir_dataflow"}
-rustc_data_structures = { path = "../../symlink_rustc_src/rustc_data_structures"}
-rustc_driver = { path = "../../symlink_rustc_src/rustc_driver"}
-rustc_errors = { path = "../../symlink_rustc_src/rustc_errors"}
-rustc_hir = { path = "../../symlink_rustc_src/rustc_hir"}
-rustc_index = { path = "../../symlink_rustc_src/rustc_index"}
-rustc_interface = { path = "../../symlink_rustc_src/rustc_interface"}
-rustc_metadata = { path = "../../symlink_rustc_src/rustc_metadata"}
-rustc_middle = { path = "../../symlink_rustc_src/rustc_middle"}
-rustc_session = { path = "../../symlink_rustc_src/rustc_session"}
-rustc_span = { path = "../../symlink_rustc_src/rustc_span"}
-rustc_target = { path = "../../symlink_rustc_src/rustc_target"}
+rustc_mir_dataflow = { path = "../../symlink_rustc_src_2024-10-12/rustc_mir_dataflow" }
+rustc_data_structures = { path = "../../symlink_rustc_src_2024-10-12/rustc_data_structures" }
+rustc_driver = { path = "../../symlink_rustc_src_2024-10-12/rustc_driver" }
+rustc_errors = { path = "../../symlink_rustc_src_2024-10-12/rustc_errors" }
+rustc_hir = { path = "../../symlink_rustc_src_2024-10-12/rustc_hir" }
+rustc_index = { path = "../../symlink_rustc_src_2024-10-12/rustc_index" }
+rustc_interface = { path = "../../symlink_rustc_src_2024-10-12/rustc_interface" }
+rustc_metadata = { path = "../../symlink_rustc_src_2024-10-12/rustc_metadata" }
+rustc_middle = { path = "../../symlink_rustc_src_2024-10-12/rustc_middle" }
+rustc_session = { path = "../../symlink_rustc_src_2024-10-12/rustc_session" }
+rustc_span = { path = "../../symlink_rustc_src_2024-10-12/rustc_span" }
+rustc_target = { path = "../../symlink_rustc_src_2024-10-12/rustc_target" }
 
 [features]
 backtraces = ["snafu/backtraces", "snafu/backtraces-impl-backtrace-crate"]

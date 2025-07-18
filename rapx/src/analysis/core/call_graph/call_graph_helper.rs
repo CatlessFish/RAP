@@ -63,6 +63,24 @@ impl CallGraphInfo {
         }
     }
 
+
+    /// Get all callees of a caller function
+    pub fn get_callees_defid(&self, caller_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callees_path: Vec<DefId> = Vec::new();
+        if let Some(caller_id) = self.node_registry.get(caller_def_path) {
+            if let Some(callee_ids) = self.function_calls.get(caller_id) {
+                for id in callee_ids {
+                    if let Some(callee_node) = self.functions.get(id) {
+                        callees_path.push(callee_node.get_def_id());
+                    }
+                }
+            }
+            Some(callees_path)
+        } else {
+            None
+        }
+    }
+
     /// Recursively get all callees of a caller
     /// Return a vector of callees, by (partly) topological order, WITHOUT considering SCCs
     pub fn get_callees_defid_recursive(&self, caller_def_path: &String) -> Option<Vec<DefId>> {

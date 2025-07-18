@@ -7,7 +7,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         // Interrupt edges
         let all_funcs = self.program_func_summary.function_summaries.keys().collect::<Vec<_>>();
-        let isr_funcs = self.program_isr_info.isr_funcs.keys().collect::<Vec<_>>();
+        let isr_funcs = self.program_isr_info.isr_funcs.iter().cloned().collect::<Vec<_>>();
 
         for func in all_funcs.iter() {
             for isr in isr_funcs.iter() {
@@ -25,9 +25,9 @@ impl<'tcx> DeadlockDetection<'tcx> {
                     rap_debug!("  continue: func {:?} has no preempt summary", func);
                     continue;
                 }
-                for (func_lock_site, interrupt_set) in func_summary.preempt_summary.iter() {
-                    if interrupt_set.get_disabled_isrs().contains(isr) {
-                        rap_debug!("  continue: isr {:?} is disabled in func {:?}", isr, func);
+                for (func_lock_site, irq_state) in func_summary.preempt_summary.iter() {
+                    if *irq_state == IrqState::MustBeDisabled {
+                        rap_debug!("  continue: irq is disabled in func {:?}", func);
                         continue;
                     }
                     rap_debug!("func_lock_site: {:?}", func_lock_site);

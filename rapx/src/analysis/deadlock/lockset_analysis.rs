@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::def::DefKind;
+use rustc_middle::mir::visit::Visitor;
 use rustc_middle::ty::{Interner, Ty, TyCtxt, TyKind};
 use rustc_middle::mir::{Body, TerminatorKind, BasicBlock, Operand, Place, Local, Statement, StatementKind, Rvalue, LocalDecl};
 use rustc_span::def_id::LocalDefId;
@@ -8,6 +9,37 @@ use rustc_span::source_map::Spanned;
 
 use crate::analysis::deadlock::*;
 use crate::{rap_info, rap_debug};
+
+struct LockGuardInstanceCollector<'tcx>{
+    tcx: &'tcx TyCtxt<'tcx>,
+    def_id: DefId,
+}
+
+// impl<'tcx> Visitor for LockGuardInstanceCollector<'tcx> {
+//     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
+//         let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
+//             self.tcx,
+//             self.tcx.param_env(self.def_id),
+//             EarlyBinder::bind(local_decl.ty),
+//         );
+//         if let TyKind::Closure(def_id, substs) = func_ty.kind() {
+//             match self.body.local_kind(local) {
+//                 LocalKind::Arg | LocalKind::ReturnPointer => {}
+//                 _ => {
+//                     if let Some(callee_instance) =
+//                         Instance::try_resolve(self.tcx, self.param_env, *def_id, substs)
+//                             .ok()
+//                             .flatten()
+//                     {
+//                         self.callsites
+//                             .push((callee_instance, CallSiteLocation::ClosureDef(local)));
+//                     }
+//                 }
+//             }
+//         }
+//         self.super_local_decl(local, local_decl);
+//     }
+// }
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn lockset_analysis(&mut self) {
@@ -97,18 +129,10 @@ impl<'tcx> DeadlockDetection<'tcx> {
             let fn_name = self.tcx.def_path_str(def_id);
             
             // 检查是否是目标锁API
-            for &(api_name, lock_state_str) in &self.target_lock_apis {
+            for &api_name in &self.target_lock_apis {
                 if fn_name.contains(api_name) {
-                    // 确定锁状态
-                    let lock_state = match lock_state_str {
-                        "read" => LockType::ReadLocked,
-                        "write" => LockType::WriteLocked,
-                        "upgradable_read" => LockType::UpgradeableReadLocked,
-                        _ => LockType::WriteLocked, // 默认为写锁
-                    };
-                    
-                    program_lock_info.lock_apis.insert(def_id, (fn_name.clone(), lock_state.clone()));
-                    rap_debug!("Found lock API: {:?}, lock state: {:?}", fn_name, lock_state);
+                    program_lock_info.lock_apis.insert(def_id, fn_name.clone());
+                    rap_debug!("Found lock API: {:?}", fn_name);
                     
                     // 找到匹配后不需要继续检查其他API
                     break;
@@ -202,7 +226,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
                                 }
 
                                 // 检查是否是锁API
-                                if let Some((api_name, ..)) = program_lock_info.lock_apis.get(&callee_func_def_id) {
+                                if let Some(api_name) = program_lock_info.lock_apis.get(&callee_func_def_id) {
                                     rap_debug!("Found lock API: {} in function {}", api_name, func_name);
                                     
                                     // 尝试确定操作的锁对象

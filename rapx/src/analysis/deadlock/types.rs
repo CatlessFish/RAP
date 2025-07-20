@@ -17,13 +17,6 @@ pub struct LockObject {
     pub span: Span,             // 源码位置
 }
 
-// 表示锁的类型
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum LockType {
-    ReadLocked,             // 读锁状态
-    WriteLocked,            // 写锁状态
-    UpgradeableReadLocked,  // 可升级读锁状态（RwLock特有）
-}
 
 // 表示锁的状态
 // MayHold
@@ -160,7 +153,7 @@ impl PartialEq for FunctionLockInfo {
 #[derive(Debug)]
 pub struct ProgramLockInfo {
     pub lock_objects: HashMap<DefId, LockObject>,      // 所有锁对象
-    pub lock_apis: HashMap<DefId, (String, LockType)>, // 所有锁API及其对锁状态的影响
+    pub lock_apis: HashMap<DefId, String>, // 所有锁API及其对锁状态的影响
     pub function_lock_infos: HashMap<DefId, FunctionLockInfo>, // 每个函数的锁集信息
 }
 

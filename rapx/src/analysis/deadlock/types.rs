@@ -3,20 +3,29 @@ use rustc_middle::ty::TyCtxt;
 use std::fmt::{self, Formatter, Display};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock, BasicBlockData};
+use rustc_middle::mir::{BasicBlock, BasicBlockData, Local};
 
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::fmt::DebugWithContext;
 
-// 表示一个锁对象
+/// 表示一个锁对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LockObject {
+pub struct LockInstance {
     pub def_id: DefId,          // 锁变量的DefId
+    // TODO: String -> enum
     pub lock_type: String,      // 锁的类型（Mutex/RwLock等）
     pub is_static: bool,        // 是否是静态锁
     pub span: Span,             // 源码位置
 }
 
+
+/// 表示一个LockGuard对象
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LockGuardInstance {
+    pub def_id: DefId,
+    pub func_def_id: DefId,
+    pub local: Local,
+}
 
 // 表示锁的状态
 // MayHold
@@ -67,13 +76,13 @@ impl LockState {
         }
     }
 }
-// 表示一个函数中的锁集
+
+/// 表示一个函数中的锁集
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockSet {
     pub lock_states: HashMap<DefId, LockState>, // 锁的状态
 }
 
-// 为LockSet实现默认构造函数
 impl LockSet {
     pub fn new() -> Self {
         LockSet {
@@ -152,15 +161,15 @@ impl PartialEq for FunctionLockInfo {
 // 程序全局锁信息
 #[derive(Debug)]
 pub struct ProgramLockInfo {
-    pub lock_objects: HashMap<DefId, LockObject>,      // 所有锁对象
-    pub lock_apis: HashMap<DefId, String>, // 所有锁API及其对锁状态的影响
+    pub lock_instances: HashMap<DefId, LockInstance>,      // 所有锁对象
+    pub lock_apis: HashMap<DefId, String>, // 所有锁API
     pub function_lock_infos: HashMap<DefId, FunctionLockInfo>, // 每个函数的锁集信息
 }
 
 impl ProgramLockInfo {
     pub fn new() -> Self {
         ProgramLockInfo {
-            lock_objects: HashMap::new(),
+            lock_instances: HashMap::new(),
             lock_apis: HashMap::new(),
             function_lock_infos: HashMap::new(),
         }
@@ -228,7 +237,7 @@ impl PartialEq for FuncIrqInfo {
 
 impl Display for FuncIrqInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} BBs in total, Exit: {}", self.bb_irq_states.len(), self.exit_irq_state)
+        write!(f, "Exit state: {}", self.exit_irq_state)
     }
 }
 

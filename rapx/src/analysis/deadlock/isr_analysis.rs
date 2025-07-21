@@ -331,7 +331,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         rap_info!("==== ISR Analysis Results ====");
 
         for isr_func in self.program_isr_info.isr_funcs.iter() {
-            rap_info!("Function {} may be a ISR function", self.tcx.def_path_str(isr_func));
+            rap_info!("May be ISR func: {} ", self.tcx.def_path_str(isr_func));
         }
 
         let mut count = 0;
@@ -339,10 +339,10 @@ impl<'tcx> DeadlockDetection<'tcx> {
             if func_info.exit_irq_state == IrqState::Bottom {
                 continue;
             }
-            rap_info!("Function {} interrupt set: {}", self.tcx.def_path_str(def_id), func_info);
+            rap_info!("Func: {},\t IRQ {}", self.tcx.def_path_str(def_id), func_info);
             count += 1;
         }
-        rap_info!("==== ISR Analysis Results End ({} ISR functions, {} non-trivial interrupt set functions) ====", self.program_isr_info.isr_entries.len(), count);
+        rap_info!("==== ISR Analysis Results End ({} ISR entries, {} non-trivial interrupt set functions) ====", self.program_isr_info.isr_entries.len(), count);
     }
 }
 

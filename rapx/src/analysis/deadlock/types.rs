@@ -22,7 +22,6 @@ pub struct LockInstance {
 /// 表示一个LockGuard对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LockGuardInstance {
-    pub def_id: DefId,
     pub func_def_id: DefId,
     pub local: Local,
 }

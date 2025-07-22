@@ -10,37 +10,6 @@ use rustc_span::source_map::Spanned;
 use crate::analysis::deadlock::*;
 use crate::{rap_info, rap_debug};
 
-struct LockGuardInstanceCollector<'tcx>{
-    tcx: &'tcx TyCtxt<'tcx>,
-    def_id: DefId,
-}
-
-// impl<'tcx> Visitor for LockGuardInstanceCollector<'tcx> {
-//     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
-//         let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
-//             self.tcx,
-//             self.tcx.param_env(self.def_id),
-//             EarlyBinder::bind(local_decl.ty),
-//         );
-//         if let TyKind::Closure(def_id, substs) = func_ty.kind() {
-//             match self.body.local_kind(local) {
-//                 LocalKind::Arg | LocalKind::ReturnPointer => {}
-//                 _ => {
-//                     if let Some(callee_instance) =
-//                         Instance::try_resolve(self.tcx, self.param_env, *def_id, substs)
-//                             .ok()
-//                             .flatten()
-//                     {
-//                         self.callsites
-//                             .push((callee_instance, CallSiteLocation::ClosureDef(local)));
-//                     }
-//                 }
-//             }
-//         }
-//         self.super_local_decl(local, local_decl);
-//     }
-// }
-
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn lockset_analysis(&mut self) {
         rap_info!("Starting Lockset Analysis...");
@@ -89,7 +58,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
             if let DefKind::Static{safety:_, mutability:_, nested:_} = def_kind {
                 let item_ty = self.tcx.type_of(def_id).instantiate_identity();
                 if self.is_target_lock_type(item_ty) {
-                    let lock_obj = LockObject {
+                    let lock_obj = LockInstance {
                         def_id,
                         lock_type: item_ty.to_string(),
                         is_static: true,
@@ -350,6 +319,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
         // 尝试从操作数中解析出函数
         if let Some(callee) = func.const_fn_def() {
             // rap_debug!("解析出函数: {}", self.tcx.def_path_str(callee.0));
+            // TODO: 是否需要单态化？
             return Some(callee.0);
         }
         None

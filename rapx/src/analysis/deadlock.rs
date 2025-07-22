@@ -1,6 +1,7 @@
 pub mod types;
 pub mod isr_analysis;
-pub mod lockset_analysis;
+// pub mod lockset_analysis;
+pub mod lockset;
 pub mod function_summary;
 pub mod ilg_construction;
 pub mod deadlock_detection;
@@ -12,6 +13,7 @@ use rustc_hir::def_id::DefId;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::*;
+use crate::analysis::deadlock::lockset::LocksetAnalysis;
 pub struct DeadlockDetection<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub call_graph: CallGraph<'tcx>,
@@ -27,6 +29,7 @@ pub struct DeadlockDetection<'tcx> {
     program_func_summary: ProgramFuncSummary,
     interrupt_lock_graph: ILG,
 }
+
 
 impl<'tcx> DeadlockDetection<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
@@ -92,19 +95,23 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         // TODO: consider alias
         // 2. Analysis LockSet
-        self.lockset_analysis();
-        // self.print_lockset_analysis_results();
+        let mut lockset = LocksetAnalysis::new(
+            self.tcx,
+            // &self.target_lock_types,
+            // &self.target_lock_apis,
+        );
+        lockset.run();
 
         // 3. Computes Function Summary
-        self.function_summary();
+        // self.function_summary();
         // self.print_function_summary_result();
 
         // 4. Construct Lock Graph
-        self.construct_ilg();
+        // self.construct_ilg();
         // self.print_ilg_result();
 
         // 5. Detect Cycles on Lock Graph
-        self.detect_deadlock();
+        // self.detect_deadlock();
     }
 }
 

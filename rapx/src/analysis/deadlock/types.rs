@@ -1,5 +1,5 @@
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{Ty, TyCtxt};
 use std::fmt::{self, Formatter, Display};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
@@ -13,9 +13,9 @@ use rustc_mir_dataflow::fmt::DebugWithContext;
 pub struct LockInstance {
     pub def_id: DefId,          // 锁变量的DefId
     // TODO: String -> enum
-    pub lock_type: String,      // 锁的类型（Mutex/RwLock等）
-    pub is_static: bool,        // 是否是静态锁
+    // pub lock_type: String,      // 锁的类型（Mutex/RwLock等）
     pub span: Span,             // 源码位置
+    // pub ty: Ty<'a>, // 锁的数据类型
 }
 
 

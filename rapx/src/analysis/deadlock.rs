@@ -91,7 +91,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         // 1. Identify ISRs and Analysis InterruptSet
         self.isr_analysis();
-        self.print_isr_analysis_result();
+        // self.print_isr_analysis_result();
 
         // TODO: consider alias
         // 2. Analysis LockSet

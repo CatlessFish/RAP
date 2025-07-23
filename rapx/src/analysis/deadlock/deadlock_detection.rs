@@ -1,5 +1,4 @@
-use rustc_hir::def_id::DefId;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet};
 
 use crate::analysis::deadlock::*;
 use crate::rap_info;

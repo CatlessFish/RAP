@@ -1,14 +1,12 @@
 pub mod types;
 pub mod isr_analysis;
-// pub mod lockset_analysis;
 pub mod lockset;
-pub mod function_summary;
 pub mod ilg_construction;
 pub mod deadlock_detection;
 
 use rustc_middle::ty::TyCtxt;
 use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock, TerminatorKind};
+use rustc_middle::mir::{BasicBlock};
 use rustc_hir::def_id::DefId;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
@@ -101,10 +99,6 @@ impl<'tcx> DeadlockDetection<'tcx> {
             // &self.target_lock_apis,
         );
         lockset.run();
-
-        // 3. Computes Function Summary
-        // self.function_summary();
-        // self.print_function_summary_result();
 
         // 4. Construct Lock Graph
         // self.construct_ilg();

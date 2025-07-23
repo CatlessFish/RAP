@@ -1,9 +1,8 @@
 use std::collections::{HashSet};
-use rustc_data_structures::flock::Lock;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{BodyOwnerKind, ItemKind};
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::ty::{AdtDef, AdtKind, Ty, TyCtxt, TyKind, TypeckResults};
+use rustc_middle::ty::{AdtDef, Ty, TyCtxt, TyKind};
 use rustc_middle::mir::{Local, LocalDecl};
 
 use crate::analysis::deadlock::*;
@@ -268,8 +267,8 @@ impl<'tcx> LocksetAnalysis<'tcx> {
             rap_info!("Lock Instance | {:?}", lock);
         }
 
-        // 3. Build LockMap: LockGuardInstance -> LockInstance
-        // 4. Calculate LockSet
+        // 4. Build LockMap: LockGuardInstance -> LockInstance
+        // 5. Calculate LockSet
 
         &self.program_lock_info
     }

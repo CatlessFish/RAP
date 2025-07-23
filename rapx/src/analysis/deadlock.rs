@@ -1,25 +1,23 @@
 pub mod types;
-pub mod isr_analysis;
+pub mod isr_analyzer;
 pub mod lock_collector;
 pub mod ilg_construction;
 pub mod deadlock_detection;
 
 use rustc_middle::ty::TyCtxt;
-use rustc_hir::def_id::DefId;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::{lock::*, interrupt::*};
 use crate::analysis::deadlock::lock_collector::LockCollector;
+use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
 
 pub struct DeadlockDetection<'tcx, 'a> {
     pub tcx: TyCtxt<'tcx>,
-    pub call_graph: CallGraph<'tcx>,
+    pub callgraph: CallGraph<'tcx>,
     pub target_lock_types: Vec<&'a str>,
     pub target_lockguard_types: Vec<&'a str>,
     pub target_isr_entries: Vec<&'a str>,
     pub target_interrupt_apis: Vec<(&'a str, InterruptApiType)>,
-    pub enable_interrupt_apis: Vec<DefId>,
-    pub disable_interrupt_apis: Vec<DefId>,
 
     program_lock_info: ProgramLockInfo,
     program_isr_info: ProgramIsrInfo,
@@ -30,7 +28,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
-            call_graph: CallGraph::new(tcx),
+            callgraph: CallGraph::new(tcx),
             target_lock_types: vec![
                 // "sync::mutex::Mutex",
                 // "sync::rwlock::RwLock",
@@ -54,9 +52,6 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
                 ("arch::x86::irq::disable_local", InterruptApiType::Disable),
             ],
 
-            enable_interrupt_apis: Vec::new(),
-            disable_interrupt_apis: Vec::new(),
-
             program_lock_info: ProgramLockInfo::new(),
             program_isr_info: ProgramIsrInfo::new(),
         }
@@ -69,11 +64,18 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
 
         // Steps:
         // Dependencies
-        self.call_graph.set_quiet(true);
-        self.call_graph.start();
+        self.callgraph.set_quiet(true);
+        self.callgraph.start();
 
         // 1. Identify ISRs and Analysis InterruptSet
-        self.isr_analysis();
+        let mut isr_analyzer = IsrAnalyzer::new(
+            self.tcx, 
+            &self.callgraph,
+            &self.target_isr_entries,
+            &self.target_interrupt_apis
+        );
+        self.program_isr_info = isr_analyzer.run();
+        // self.isr_analysis();
         // self.print_isr_analysis_result();
 
         // TODO: consider alias

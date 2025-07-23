@@ -7,9 +7,8 @@ extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::{ Analysis, AnalysisDomain, JoinSemiLattice };
 
 use crate::analysis::deadlock::types::interrupt::*;
-use crate::analysis::deadlock::DeadlockDetection;
+use crate::analysis::core::call_graph::CallGraph;
 use crate::{rap_info, rap_debug};
-// use crate::utils::source::get_fn_name;
 
 impl JoinSemiLattice for IrqState {
     fn join(&mut self, other: &Self) -> bool {
@@ -19,7 +18,7 @@ impl JoinSemiLattice for IrqState {
     }
 }
 
-struct FuncISRAnalyzer<'tcx, 'm> {
+struct FuncIsrAnalyzer<'tcx, 'm> {
     tcx: TyCtxt<'tcx>,
 
     /// The `DefId`s of Enable-Interrupt Apis
@@ -32,14 +31,14 @@ struct FuncISRAnalyzer<'tcx, 'm> {
     analyzed_functions: &'m HashMap<DefId, FuncIrqInfo>,
 }
 
-impl<'tcx, 'm> FuncISRAnalyzer<'tcx, 'm> {
+impl<'tcx, 'm> FuncIsrAnalyzer<'tcx, 'm> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         enable_interrupt_apis: Vec<DefId>,
         disable_interrupt_apis: Vec<DefId>,
         analyzed_functions: &'m HashMap<DefId, FuncIrqInfo>,
     ) -> Self {
-        FuncISRAnalyzer {
+        FuncIsrAnalyzer {
             tcx,
             enable_interrupt_apis: enable_interrupt_apis,
             disable_interrupt_apis: disable_interrupt_apis,
@@ -48,7 +47,7 @@ impl<'tcx, 'm> FuncISRAnalyzer<'tcx, 'm> {
     }
 }
 
-impl<'tcx, 'm> AnalysisDomain<'tcx> for FuncISRAnalyzer<'tcx, 'm> {
+impl<'tcx, 'm> AnalysisDomain<'tcx> for FuncIsrAnalyzer<'tcx, 'm> {
     type Domain = IrqState;
 
     const NAME: &'static str = "ISRAnalysis";
@@ -66,7 +65,7 @@ impl<'tcx, 'm> AnalysisDomain<'tcx> for FuncISRAnalyzer<'tcx, 'm> {
     }
 }
 
-impl<'tcx, 'm> Analysis<'tcx> for FuncISRAnalyzer<'tcx, 'm> {
+impl<'tcx, 'm> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'm> {
     fn apply_statement_effect(
             &mut self,
             _state: &mut <Self as AnalysisDomain<'tcx>>::Domain,
@@ -121,21 +120,48 @@ impl<'tcx, 'm> Analysis<'tcx> for FuncISRAnalyzer<'tcx, 'm> {
     }
 }
 
-impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
-    pub fn isr_analysis(&mut self) {
+pub struct IsrAnalyzer<'tcx, 'a> {
+    tcx: TyCtxt<'tcx>,
+    callgraph: &'a CallGraph<'tcx>,
+    target_isr_entries: &'a Vec<&'a str>,
+    target_interrupt_apis: &'a Vec<(&'a str, InterruptApiType)>,
+    enable_interrupt_apis: Vec<DefId>,
+    disable_interrupt_apis: Vec<DefId>,
+    program_isr_info: ProgramIsrInfo,
+}
+
+impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        callgraph: &'a CallGraph<'tcx>,
+        target_isr_entries: &'a Vec<&'a str>,
+        target_interrupt_apis: &'a Vec<(&'a str, InterruptApiType)>,
+    ) -> Self {
+        Self {
+            tcx,
+            callgraph,
+            target_isr_entries,
+            target_interrupt_apis,
+            enable_interrupt_apis: vec![],
+            disable_interrupt_apis: vec![],
+            program_isr_info: ProgramIsrInfo::new(),
+        }
+    }
+
+    pub fn run(&mut self) -> ProgramIsrInfo {
         // Steps:
         // 1. Collect a set of ISRs
         self.collect_isr();
-        rap_info!("Collected {} ISRs", self.program_isr_info.isr_funcs.len());
-
+        
         // 2. Collect a set of interrupt APIs
         self.collect_interrupt_apis();
-
+        
         // 3. Calculate interrupt sets for each function
         // This step is inter-procedural
-        self.calculate_function_interrupt_sets();
-
-        rap_info!("Completed ISR Analysis");
+        self.analyze_interrupt_set();
+        
+        rap_info!("Collected {} ISRs", self.program_isr_info.isr_funcs.len());
+        self.program_isr_info.clone()
     }
 
     /// Collect the `DefIds` of `target_isr_entries` and their (recursively) callees
@@ -161,7 +187,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
                 isr_funcs.insert(isr_def_id.clone());
 
                 // then, find all possible callees
-                if let Some(callees) = self.call_graph.graph.get_callees_defid_recursive(&isr_entry.to_string()) {
+                if let Some(callees) = self.callgraph.graph.get_callees_defid_recursive(&isr_entry.to_string()) {
                     for callee in callees {
                         isr_funcs.insert(callee);
                     }
@@ -204,9 +230,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
     }
 
     /// The outer iteration for inter-procedurely calculate `FuncIrqInfo` for each function
-    fn calculate_function_interrupt_sets(&mut self) {
-        rap_info!("Calculating function interrupt sets...");
-
+    fn analyze_interrupt_set(&mut self) {
         // Track the exit interrupt sets of already analyzed functions
         let mut analyzed_functions: HashMap<DefId, FuncIrqInfo> = HashMap::new();
         // Track the recursion stack to prevent cycles
@@ -268,7 +292,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
 
         // First collect callees, and analyze them first
         if let Some(callees) = self
-            .call_graph
+            .callgraph
             .graph
             .get_callees_defid(&self.tcx.def_path_str(func_def_id))
         {
@@ -281,7 +305,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
 
         // Analyze the function
         let body: &Body = self.tcx.optimized_mir(func_def_id);
-        let mut result_cursor = FuncISRAnalyzer::new(
+        let mut result_cursor = FuncIsrAnalyzer::new(
             self.tcx,
             self.enable_interrupt_apis.clone(),
             self.disable_interrupt_apis.clone(),
@@ -328,7 +352,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
     }
 
     
-    pub fn print_isr_analysis_result(&self) {
+    pub fn print_result(&self) {
         rap_info!("==== ISR Analysis Results ====");
 
         for isr_func in self.program_isr_info.isr_funcs.iter() {

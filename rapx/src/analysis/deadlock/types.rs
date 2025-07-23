@@ -257,7 +257,7 @@ pub mod interrupt {
     }
 
     /// The interrupt info of the whole program
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct ProgramIsrInfo {
         /// The `DefId`s of all the identified ISR ENTRY functions.
         /// Corresponds to `DeadlockDetection.target_isr_entries`.

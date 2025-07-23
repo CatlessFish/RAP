@@ -149,7 +149,6 @@ impl<'tcx> LockInstanceCollector<'tcx> {
                 BodyOwnerKind::Static(..) => local_def_id.to_def_id(),
                 _ => continue,
             };
-            // rap_info!("{}", self.tcx.def_path_str(def_id));
             
             let body = self.tcx.hir().body_owned_by(local_def_id);
             let expr = body.value;
@@ -167,6 +166,7 @@ impl<'tcx> LockInstanceCollector<'tcx> {
         }
     }
 
+    // FIXME: fail to support nested locktype, e.g. Vec<SpinLock>
     fn lock_type_from(&self, local_type: Ty<'tcx>) -> Option<Ty<'tcx>> {
         // Only look for Adt(struct), as we suppose lockguard types are all struct
         if let TyKind::Adt(adt_def, generic_args) = local_type.kind() {
@@ -176,17 +176,17 @@ impl<'tcx> LockInstanceCollector<'tcx> {
 
             // If local_type exactly matches some lock_type
             if self.lock_types.contains(adt_def) {
-                return Some(local_type)
+                return Some(local_type);
             }
 
-            // Or, if any fields of local_type matches some lock_type
-            // Temporarily we don't look deeper
-            // TODO: Support fields of Vec
-            for field in adt_def.all_fields() {
-                let field_ty = field.ty(self.tcx, generic_args);
-                if let TyKind::Adt(field_adt_def, ..) = field_ty.kind() {
-                    if self.lock_types.contains(field_adt_def) {
-                        return Some(local_type)
+            // Or, if any generic param of the struct is some lock_type
+            // TODO: record more detail for field-sensitive
+            for generic in local_type.walk() {
+                if let Some(gen_type) = generic.as_type() {
+                    if let TyKind::Adt(sub_adt, ..) = gen_type.kind() {
+                        if self.lock_types.contains(sub_adt) {
+                            return Some(local_type);
+                        }
                     }
                 }
             }

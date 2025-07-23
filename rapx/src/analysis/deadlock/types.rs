@@ -18,6 +18,12 @@ pub struct LockInstance {
     // pub ty: Ty<'a>, // 锁的数据类型
 }
 
+impl Display for LockInstance {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.def_id)
+    }
+}
+
 
 /// 表示一个LockGuard对象
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

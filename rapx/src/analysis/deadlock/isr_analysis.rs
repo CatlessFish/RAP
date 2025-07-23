@@ -1,12 +1,13 @@
+use std::collections::{HashMap, HashSet};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Body, Location, Statement, Terminator, TerminatorEdges, TerminatorKind, CallReturnPlaces};
+use rustc_middle::mir::{Body, BasicBlock, Location, Statement, Terminator, TerminatorEdges, TerminatorKind, CallReturnPlaces};
 use rustc_middle::ty::TyCtxt;
 
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::{ Analysis, AnalysisDomain, JoinSemiLattice };
 
-
-use crate::analysis::deadlock::*;
+use crate::analysis::deadlock::types::interrupt::*;
+use crate::analysis::deadlock::DeadlockDetection;
 use crate::{rap_info, rap_debug};
 // use crate::utils::source::get_fn_name;
 
@@ -120,7 +121,7 @@ impl<'tcx, 'm> Analysis<'tcx> for FuncISRAnalyzer<'tcx, 'm> {
     }
 }
 
-impl<'tcx> DeadlockDetection<'tcx> {
+impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx :'a{
     pub fn isr_analysis(&mut self) {
         // Steps:
         // 1. Collect a set of ISRs
@@ -241,7 +242,7 @@ impl<'tcx> DeadlockDetection<'tcx> {
     /// If any callee hasn't been analyzed yet, recursively analyze the callee first.
     /// Maintains a recursive stack to avoid cycle.\
     /// Use `FuncISRAnalyzer` to perform fix-point iteration on a functions's CFG.
-    fn analyze_function_interrupt_set<'a>(
+    fn analyze_function_interrupt_set(
         &self,
         func_def_id: DefId,
         analyzed_functions: &mut HashMap<DefId, FuncIrqInfo>,

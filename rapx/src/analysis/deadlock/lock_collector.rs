@@ -1,25 +1,25 @@
-use std::collections::{HashSet};
+use std::collections::{HashSet, HashMap};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{BodyOwnerKind, ItemKind};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::ty::{AdtDef, Ty, TyCtxt, TyKind};
 use rustc_middle::mir::{Body, Local, LocalDecl, Operand, Rvalue, TerminatorKind};
 
-use crate::analysis::deadlock::*;
+use crate::analysis::deadlock::types::lock::*;
 use crate::{rap_info};
 
-struct LockGuardInstanceCollector<'tcx>{
+struct LockGuardInstanceCollector<'tcx, 'a>{
     tcx: TyCtxt<'tcx>,
     func_def_id: DefId,
-    lockguard_type_str: Vec<&'tcx str>,
+    lockguard_type_str: &'a Vec<&'a str>,
     lockguard_instances: HashSet<Local>,
 }
 
-impl<'tcx> LockGuardInstanceCollector<'tcx> {
+impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         func_def_id: DefId,
-        lockguard_type_str: Vec<&'tcx str>,
+        lockguard_type_str: &'a Vec<&'a str>,
     ) -> Self {
         Self {
             tcx,
@@ -47,7 +47,7 @@ impl<'tcx> LockGuardInstanceCollector<'tcx> {
             // FIXME: match DefId maybe?
             let struct_name = format!("{:?}", adt_def);
 
-            for &type_str in &self.lockguard_type_str {
+            for &type_str in self.lockguard_type_str {
                 if type_str == struct_name {
                     return Some(())
                 }
@@ -66,7 +66,7 @@ impl<'tcx> LockGuardInstanceCollector<'tcx> {
     }
 }
 
-impl<'tcx> Visitor<'tcx> for LockGuardInstanceCollector<'tcx> {
+impl<'tcx, 'a> Visitor<'tcx> for LockGuardInstanceCollector<'tcx, 'a> {
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
         if self.lockguard_type_from(local_decl.ty).is_some() {
             self.lockguard_instances.insert(local);
@@ -75,16 +75,16 @@ impl<'tcx> Visitor<'tcx> for LockGuardInstanceCollector<'tcx> {
     }
 }
 
-struct LockTypeCollector<'tcx> {
+struct LockTypeCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    lock_type_str: Vec<&'tcx str>,
+    lock_type_str: &'a Vec<&'a str>,
     lock_types: HashSet<AdtDef<'tcx>>,
 }
 
-impl<'tcx> LockTypeCollector<'tcx> {
+impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
-        lock_type_str: Vec<&'tcx str>,
+        lock_type_str: &'a Vec<&'a str>,
     ) -> Self {
         Self { 
             tcx,
@@ -109,7 +109,7 @@ impl<'tcx> LockTypeCollector<'tcx> {
             // Match name
             // FIXME: use a more stable approach?
             let struct_name = format!("{:?}", adt_def);
-            for candidate in &self.lock_type_str {
+            for candidate in self.lock_type_str {
                 if struct_name == *candidate {
                     self.lock_types.insert(adt_def);
                     // rap_info!("Locktype: {:?}", struct_name);
@@ -169,7 +169,7 @@ impl<'tcx> LockInstanceCollector<'tcx> {
     // FIXME: fail to support nested locktype, e.g. Vec<SpinLock>
     fn lock_type_from(&self, local_type: Ty<'tcx>) -> Option<Ty<'tcx>> {
         // Only look for Adt(struct), as we suppose lockguard types are all struct
-        if let TyKind::Adt(adt_def, generic_args) = local_type.kind() {
+        if let TyKind::Adt(adt_def, ..) = local_type.kind() {
             if !adt_def.is_struct() {
                 return None
             }
@@ -190,6 +190,8 @@ impl<'tcx> LockInstanceCollector<'tcx> {
                     }
                 }
             }
+
+            // TODO: support struct field
         }
         None
     }
@@ -199,12 +201,6 @@ impl<'tcx> LockInstanceCollector<'tcx> {
         self.lock_instances.clone()
     }
 }
-
-/// Map from `Local` LockGuard to LockInstance of a function
-pub type LocalLockMap = HashMap<Local, LockInstance>;
-
-/// Each function's `LocalLockMap`
-pub type GlobalLockMap = HashMap<DefId, LocalLockMap>;
 
 /// Build LocalLockMap for a function
 struct LockMapBuilder<'tcx> {
@@ -371,36 +367,34 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
     }
 }
 
-pub struct LocksetAnalysis<'tcx> {
+pub struct LockCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    // _target_lock_types: &'tcx Vec<&'tcx str>,
-    // _target_lock_apis: &'tcx Vec<&'tcx str>,
+    _target_lock_types: &'a Vec<&'a str>,
+    _target_lockguard_types: &'a Vec<&'a str>,
     lock_types: HashSet<AdtDef<'tcx>>,
     lock_instances: HashSet<LockInstance>,
     lockguard_instances: HashSet<LockGuardInstance>,
     global_lockmap: GlobalLockMap,
-    program_lock_info: ProgramLockInfo,
 }
 
-impl<'tcx> LocksetAnalysis<'tcx> {
+impl<'tcx, 'a> LockCollector<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
-        // target_lock_types: &'tcx Vec<&'tcx str>,
-        // target_lock_apis: &'tcx Vec<&'tcx str>,
+        _target_lock_types: &'a Vec<&'a str>,
+        _target_lockguard_types: &'a Vec<&'a str>,
     ) -> Self {
         Self { 
             tcx,
-            // _target_lock_types: target_lock_types,
-            // _target_lock_apis: target_lock_apis,
+            _target_lock_types,
+            _target_lockguard_types,
             lock_types: HashSet::new(),
             lock_instances: HashSet::new(),
             lockguard_instances: HashSet::new(),
             global_lockmap: GlobalLockMap::new(),
-            program_lock_info: ProgramLockInfo::new(),
         }
     }
 
-    pub fn run(&mut self) -> &ProgramLockInfo {
+    fn run(&mut self) {
         // 1. Collect LockGuard Instances
         for local_def_id in self.tcx.hir().body_owners() {
             let def_id = match self.tcx.hir().body_owner_kind(local_def_id) {
@@ -411,7 +405,7 @@ impl<'tcx> LocksetAnalysis<'tcx> {
             let mut lockguard_collector = LockGuardInstanceCollector::new(
                 self.tcx,
                 def_id,
-                vec!["sync::spin::SpinLockGuard_"],
+                self._target_lockguard_types,
             );
             let func_lockguard_instances = lockguard_collector.collect();
 
@@ -426,7 +420,7 @@ impl<'tcx> LocksetAnalysis<'tcx> {
         // 2. Collect Lock Types
         let mut locktype_collector = LockTypeCollector::new(
             self.tcx,
-            vec!["sync::spin::SpinLock"],
+            self._target_lock_types,
         );
         self.lock_types = locktype_collector.collect();
 
@@ -469,7 +463,14 @@ impl<'tcx> LocksetAnalysis<'tcx> {
 
             self.global_lockmap.insert(def_id, func_lockmap);
         }
+    }
 
-        &self.program_lock_info
+    pub fn collect(&mut self) -> ProgramLockInfo {
+        self.run();
+        ProgramLockInfo {
+            lock_instances: self.lock_instances.clone(),
+            lockguard_instances: self.lockguard_instances.clone(),
+            lockmap: self.global_lockmap.clone(),
+        }
     }
 }

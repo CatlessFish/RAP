@@ -1,57 +1,44 @@
 pub mod types;
 pub mod isr_analysis;
-pub mod lockset;
+pub mod lock_collector;
 pub mod ilg_construction;
 pub mod deadlock_detection;
 
 use rustc_middle::ty::TyCtxt;
-use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock};
 use rustc_hir::def_id::DefId;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
-use crate::analysis::deadlock::types::*;
-use crate::analysis::deadlock::lockset::LocksetAnalysis;
-pub struct DeadlockDetection<'tcx> {
+use crate::analysis::deadlock::types::{lock::*, interrupt::*};
+use crate::analysis::deadlock::lock_collector::LockCollector;
+
+pub struct DeadlockDetection<'tcx, 'a> {
     pub tcx: TyCtxt<'tcx>,
     pub call_graph: CallGraph<'tcx>,
-    pub target_lock_types: Vec<&'tcx str>,
-    pub target_lock_apis: Vec<&'tcx str>,
-    pub target_isr_entries: Vec<&'tcx str>,
-    pub target_interrupt_apis: Vec<(&'tcx str, InterruptApiType)>,
+    pub target_lock_types: Vec<&'a str>,
+    pub target_lockguard_types: Vec<&'a str>,
+    pub target_isr_entries: Vec<&'a str>,
+    pub target_interrupt_apis: Vec<(&'a str, InterruptApiType)>,
     pub enable_interrupt_apis: Vec<DefId>,
     pub disable_interrupt_apis: Vec<DefId>,
 
     program_lock_info: ProgramLockInfo,
     program_isr_info: ProgramIsrInfo,
-    program_func_summary: ProgramFuncSummary,
-    interrupt_lock_graph: ILG,
 }
 
 
-impl<'tcx> DeadlockDetection<'tcx> {
+impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
             call_graph: CallGraph::new(tcx),
             target_lock_types: vec![
-                "sync::mutex::Mutex",
-                "sync::rwlock::RwLock",
-                "sync::rwmutex::RwMutex",
+                // "sync::mutex::Mutex",
+                // "sync::rwlock::RwLock",
+                // "sync::rwmutex::RwMutex",
                 "sync::spin::SpinLock",
             ],
-            target_lock_apis: vec![
-                "sync::spin::SpinLock::<T, G>::lock",
-                "sync::spin::SpinLock::<T, G>::lock_arc",
-                "sync::rwlock::RwLock::<T>::read",
-                "sync::rwlock::RwLock::<T>::read_arc",
-                "sync::rwlock::RwLock::<T>::write",
-                "sync::rwlock::RwLock::<T>::write_arc",
-                "sync::mutex::Mutex::<T>::lock",
-                "sync::mutex::Mutex::<T>::lock_arc",
-                "sync::rwmutex::RwMutex::<T>::read",
-                "sync::rwmutex::RwMutex::<T>::write",
-                "sync::rwmutex::RwMutex::<T>::upread",
+            target_lockguard_types: vec![
+                "sync::spin::SpinLockGuard_",
             ],
             target_isr_entries: vec![
                 "arch::x86::iommu::fault::iommu_page_fault_handler",
@@ -72,14 +59,12 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
             program_lock_info: ProgramLockInfo::new(),
             program_isr_info: ProgramIsrInfo::new(),
-            program_func_summary: ProgramFuncSummary::new(),
-            interrupt_lock_graph: ILG::new(),
         }
     }
 
     /// Start Interrupt-Aware Deadlock Detection
     /// Note: the detection is currently crate-local
-    pub fn start(&mut self) {
+    pub fn start (&'a mut self) {
         rap_info!("Executing Deadlock Detection");
 
         // Steps:
@@ -93,19 +78,12 @@ impl<'tcx> DeadlockDetection<'tcx> {
 
         // TODO: consider alias
         // 2. Analysis LockSet
-        let mut lockset = LocksetAnalysis::new(
+        let mut lock_collector = LockCollector::new(
             self.tcx,
-            // &self.target_lock_types,
-            // &self.target_lock_apis,
+            &self.target_lock_types,
+            &self.target_lockguard_types,
         );
-        lockset.run();
-
-        // 4. Construct Lock Graph
-        // self.construct_ilg();
-        // self.print_ilg_result();
-
-        // 5. Detect Cycles on Lock Graph
-        // self.detect_deadlock();
+        self.program_lock_info = lock_collector.collect();
     }
 }
 

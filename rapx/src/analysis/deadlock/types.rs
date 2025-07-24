@@ -1,16 +1,15 @@
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{TyCtxt};
+use rustc_middle::{mir::Location};
 use std::fmt::{self, Formatter, Display};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock, BasicBlockData, Local};
+use rustc_middle::mir::{BasicBlock, Local};
 
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::fmt::DebugWithContext;
 
 pub mod lock {
     use super::*;
-    use rustc_mir_dataflow::JoinSemiLattice;
 
     /// A `LockInstance` is a `static` variable, with Lock type
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -45,19 +44,18 @@ pub mod lock {
 
     /// `LockState` indicates the status of a `LockInstance`.\
     /// This is a semi-lattice.
-    //      MayHold
-    // MustHold, MustNotHold
-    //      Bottom
+    // MayHold
+    // MustNotHold
+    // Bottom
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub enum LockState {
         Bottom,
-        MustHold,
         MustNotHold,
         MayHold,
     }
 
-    impl JoinSemiLattice for LockState {
-        fn join(&mut self, other: &Self) -> bool {
+    impl  LockState {
+        pub fn join(&mut self, other: &Self) -> bool {
             let old = self.clone();
             *self = match (&self, other) {
                 // Bottom U any = any
@@ -68,15 +66,8 @@ pub mod lock {
                 (Self::MayHold, _) => Self::MayHold,
                 (_, Self::MayHold) => Self::MayHold,
 
-                // MustHold U MustHold = MustHold
-                (Self::MustHold, Self::MustHold) => Self::MustHold,
-
-                // MustNotHold U MustNotHold = MustNotHold
-                (Self::MustNotHold, Self::MustNotHold) => Self::MustNotHold,
-
-                // MustHold U MustNotHold = MayHold
-                (Self::MustHold, Self::MustNotHold) => Self::MayHold,
-                (Self::MustNotHold, Self::MustHold) => Self::MayHold,
+                // MustNostHold U MustNotHold = MustNotHold
+                _ => Self::MustNotHold,
             };
             *self != old
         }
@@ -85,7 +76,7 @@ pub mod lock {
     /// 表示一个函数中的锁集
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct LockSet {
-        pub lock_states: HashMap<DefId, LockState>, // 锁的状态
+        pub lock_states: HashMap<LockInstance, LockState>, // 锁的状态
     }
 
     impl LockSet {
@@ -97,34 +88,21 @@ pub mod lock {
         
         // 合并两个锁集（用于分支汇合点）
         // Usage: next_bb_lockstate.merge(&current_bb_lockstate)
-        pub fn merge(&mut self, other: &LockSet) {
-            for (lock_id, other_state) in other.lock_states.iter() {
-                if let Some(old_state) = self.lock_states.get_mut(lock_id) {
+        pub fn merge(&mut self, other: &LockSet) -> bool {
+            let old = self.clone();
+            for (lock, other_state) in other.lock_states.iter() {
+                if let Some(old_state) = self.lock_states.get_mut(lock) {
                     old_state.join(other_state);
                 } else {
-                    self.lock_states.insert(lock_id.clone(), other_state.clone());
+                    self.lock_states.insert(lock.clone(), other_state.clone());
                 }
             }
+            old != *self
         }
 
         // 更新单个锁的state
-        pub fn update_lock_state(&mut self, lock_id: DefId, state: LockState) {
+        pub fn update_lock_state(&mut self, lock_id: LockInstance, state: LockState) {
             self.lock_states.insert(lock_id, state);
-        }
-
-        // 获取must_hold的锁列表
-        pub fn get_must_hold_locks(&self) -> Vec<DefId> {
-            self.lock_states.iter().filter(|(_, state)| **state == LockState::MustHold).map(|(lock_id, _)| *lock_id).collect()
-        }
-
-        // 获取may_hold的锁列表
-        pub fn get_may_hold_locks(&self) -> Vec<DefId> {
-            self.lock_states.iter().filter(|(_, state)| **state == LockState::MayHold).map(|(lock_id, _)| *lock_id).collect()
-        }
-        
-        // 获取must_not_hold的锁列表
-        pub fn get_must_not_hold_locks(&self) -> Vec<DefId> {
-            self.lock_states.iter().filter(|(_, state)| **state == LockState::MustNotHold).map(|(lock_id, _)| *lock_id).collect()
         }
 
         // 判断是否所有锁都是Bottom
@@ -133,33 +111,18 @@ pub mod lock {
         }
     }
 
-    impl Display for LockSet {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "MustHold: {:?}, MustNotHold: {:?}, MayHold: {:?}", self.get_must_hold_locks(), self.get_must_not_hold_locks(), self.get_may_hold_locks())
-        }
-    }
-
+    impl<C> DebugWithContext<C> for LockSet {}
 
     // 函数的锁集信息
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FunctionLockSet {
         pub func_def_id: DefId,                                // 函数ID
         pub entry_lockset: LockSet,                       // 入口锁集
         pub exit_lockset: LockSet,                        // 出口锁集
         pub bb_locksets: HashMap<BasicBlock, LockSet>,    // 每个基本块的锁集
-        pub call_sites: Vec<(BasicBlock, DefId)>,      // 调用点信息
-        pub lock_sites: Vec<OperationSite>,                    // 锁点信息
     }
 
-    impl PartialEq for FunctionLockSet {
-        fn eq(&self, other: &Self) -> bool {
-            self.func_def_id == other.func_def_id &&
-            self.entry_lockset == other.entry_lockset &&
-            self.exit_lockset == other.exit_lockset &&
-            self.bb_locksets == other.bb_locksets &&
-            self.lock_sites == other.lock_sites
-        }
-    }
+    pub type ProgramLockSet = HashMap<DefId, FunctionLockSet>;
 
     /// ProgramLockInfo contains `LockGuardInstance`, `LockInstance` and Map from `LockGuardInstance` to `LockInstance`
     #[derive(Debug)]
@@ -232,7 +195,7 @@ pub mod interrupt {
         pub bb_irq_states: HashMap<BasicBlock, IrqState>,
 
         /// 开启中断的位置
-        pub interrupt_enable_sites: Vec<OperationSite>,
+        pub interrupt_enable_sites: Vec<CallSite>,
     }
 
     impl PartialEq for FuncIrqInfo {
@@ -256,7 +219,7 @@ pub mod interrupt {
         Enable,
     }
 
-    /// The interrupt info of the whole program
+    /// Contains Irq Functions and `IrqState` at each program point
     #[derive(Debug, Clone)]
     pub struct ProgramIsrInfo {
         /// The `DefId`s of all the identified ISR ENTRY functions.
@@ -282,46 +245,12 @@ pub mod interrupt {
     }
 }
 
-// === Function Summary ===
-
-// LockSite / InterrupteEnableSite
+/// A Location of a function call
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OperationSite {
-    pub object_def_id: DefId,
-    pub func_def_id: Option<DefId>, // Should only be None for regular lock edge nodes, because we may not know where the lock is acquired
-    pub bb_index: Option<BasicBlock>, // As above
-}
+pub struct CallSite {
+    /// def_id of the caller function
+    pub caller_def_id: DefId,
 
-impl OperationSite {
-    pub fn to_span(&self, tcx: &TyCtxt) -> Option<Span> {
-        if self.func_def_id.is_none() || self.bb_index.is_none() {
-            return None;
-        }
-        if !tcx.is_mir_available(self.func_def_id.unwrap()) {
-            return None;
-        }
-        let body = tcx.optimized_mir(self.func_def_id.unwrap());
-        let bb: &BasicBlockData = &body.basic_blocks[self.bb_index.unwrap()];
-        let terminator = bb.terminator();
-        Some(terminator.source_info.span)
-    }
-
-    pub fn to_string(&self, tcx: &TyCtxt) -> String {
-        let span = self.to_span(tcx);
-        if let Some(span) = span {
-            format!("{:?} at {:?}", self.object_def_id, span)
-        } else {
-            format!("{:?}", self.object_def_id)
-        }
-    }
-}
-
-impl Display for OperationSite {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if self.func_def_id.is_none() || self.bb_index.is_none() {
-            write!(f, "{:?}", self.object_def_id)
-        } else {
-            write!(f, "{:?} in {:?}", self.object_def_id, self.func_def_id.unwrap())
-        }
-    }
+    /// callsite location inside the function
+    pub location: Location,
 }

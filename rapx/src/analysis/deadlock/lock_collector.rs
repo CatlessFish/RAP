@@ -302,6 +302,8 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
         // We suppose the assignments are terminators like `_2 = spin::SpinLock::<u32>::lock(move _3) -> [return: bb2, unwind continue];`
         match &terminator.kind {
             TerminatorKind::Call { args, destination, .. } => {
+                // TODO: if some non-lock function returns a lockguard?
+                
                 // 1. Match return place
                 if let Some(lockguard) = self.lockguard_instances
                     .iter()

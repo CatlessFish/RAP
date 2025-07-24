@@ -18,7 +18,7 @@ impl JoinSemiLattice for IrqState {
     }
 }
 
-struct FuncIsrAnalyzer<'tcx, 'm> {
+struct FuncIsrAnalyzer<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
 
     /// The `DefId`s of Enable-Interrupt Apis
@@ -28,15 +28,15 @@ struct FuncIsrAnalyzer<'tcx, 'm> {
     disable_interrupt_apis: Vec<DefId>,
 
     /// Ref of a global cache recording the result of analyzed functions
-    analyzed_functions: &'m HashMap<DefId, FuncIrqInfo>,
+    analyzed_functions: &'a HashMap<DefId, FuncIrqInfo>,
 }
 
-impl<'tcx, 'm> FuncIsrAnalyzer<'tcx, 'm> {
+impl<'tcx, 'a> FuncIsrAnalyzer<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         enable_interrupt_apis: Vec<DefId>,
         disable_interrupt_apis: Vec<DefId>,
-        analyzed_functions: &'m HashMap<DefId, FuncIrqInfo>,
+        analyzed_functions: &'a HashMap<DefId, FuncIrqInfo>,
     ) -> Self {
         FuncIsrAnalyzer {
             tcx,
@@ -47,7 +47,7 @@ impl<'tcx, 'm> FuncIsrAnalyzer<'tcx, 'm> {
     }
 }
 
-impl<'tcx, 'm> AnalysisDomain<'tcx> for FuncIsrAnalyzer<'tcx, 'm> {
+impl<'tcx, 'a> AnalysisDomain<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
     type Domain = IrqState;
 
     const NAME: &'static str = "ISRAnalysis";
@@ -65,7 +65,7 @@ impl<'tcx, 'm> AnalysisDomain<'tcx> for FuncIsrAnalyzer<'tcx, 'm> {
     }
 }
 
-impl<'tcx, 'm> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'm> {
+impl<'tcx, 'a> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
     fn apply_statement_effect(
             &mut self,
             _state: &mut <Self as AnalysisDomain<'tcx>>::Domain,
@@ -75,12 +75,12 @@ impl<'tcx, 'm> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'm> {
         // We don't care about normal statements, since they don't affect Irq state.
     }
 
-    fn apply_terminator_effect<'mir>(
+    fn apply_terminator_effect<'air>(
             &mut self,
             _state: &mut <Self as AnalysisDomain<'tcx>>::Domain,
-            terminator: &'mir Terminator<'tcx>,
+            terminator: &'air Terminator<'tcx>,
             _location: Location,
-        ) -> TerminatorEdges<'mir, 'tcx> {
+        ) -> TerminatorEdges<'air, 'tcx> {
             if let TerminatorKind::Call { func, .. } = &terminator.kind {
                 // Handle call return effects
                 if let Some(callee_def_id) = func.const_fn_def() {

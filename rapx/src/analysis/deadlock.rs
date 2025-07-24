@@ -1,15 +1,15 @@
 pub mod types;
 pub mod isr_analyzer;
 pub mod lock_collector;
-pub mod ilg_construction;
-pub mod deadlock_detection;
+pub mod lockset_analyzer;
 
 use rustc_middle::ty::TyCtxt;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::{lock::*, interrupt::*};
-use crate::analysis::deadlock::lock_collector::LockCollector;
 use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
+use crate::analysis::deadlock::lock_collector::LockCollector;
+use crate::analysis::deadlock::lockset_analyzer::LockSetAnalyzer;
 
 pub struct DeadlockDetection<'tcx, 'a> {
     pub tcx: TyCtxt<'tcx>,
@@ -20,6 +20,7 @@ pub struct DeadlockDetection<'tcx, 'a> {
     pub target_interrupt_apis: Vec<(&'a str, InterruptApiType)>,
 
     program_lock_info: ProgramLockInfo,
+    program_lock_set: ProgramLockSet,
     program_isr_info: ProgramIsrInfo,
 }
 
@@ -53,6 +54,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             ],
 
             program_lock_info: ProgramLockInfo::new(),
+            program_lock_set: ProgramLockSet::new(),
             program_isr_info: ProgramIsrInfo::new(),
         }
     }
@@ -79,13 +81,22 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
         // self.print_isr_analysis_result();
 
         // TODO: consider alias
-        // 2. Analysis LockSet
+        // 2. Collect Locks and LockGuards
         let mut lock_collector = LockCollector::new(
             self.tcx,
             &self.target_lock_types,
             &self.target_lockguard_types,
         );
         self.program_lock_info = lock_collector.collect();
+
+        // 3. Analysis LockSet
+        let mut lockset_analyzer = LockSetAnalyzer::new(
+            self.tcx,
+            &self.callgraph,
+            &self.program_lock_info.lockmap,
+        );
+        self.program_lock_set = lockset_analyzer.run();
+        lockset_analyzer.print_result();
     }
 }
 

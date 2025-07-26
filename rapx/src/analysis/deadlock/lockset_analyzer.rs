@@ -153,7 +153,8 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
                 func_def_id,
                 entry_lockset: entry_lockset.clone(),
                 exit_lockset: LockSet::new(),
-                bb_locksets: HashMap::new(),
+                post_bb_locksets: HashMap::new(),
+                pre_bb_locksets: HashMap::new(),
             })
             .clone();
         Self {
@@ -186,9 +187,10 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
         // Clone callsites to avoid longer reference
         let callsites = result.analysis.callsites.clone();
 
-        // The result has been stored in self.func_lock_info.
-        // Now calculate influenced_callees.
+        // The result has been stored in self.func_lock_info, except pre_bb_locksets
         let mut cursor = result.into_results_cursor(body);
+        
+        // Now calculate influenced_callees.
         for (loc, callee) in callsites.iter() {
             // Note that bb_locksets are lockset AFTER the bb's terminator (e.g. after function call),
             // For entry_lockset however, we need the lockset BEFORE the function call
@@ -202,6 +204,16 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
                 self.influenced_callees.insert(*callee, new_entry_set.clone());
             }
         }
+        
+        // pre_bb_locksets is now available after the analysis is finished
+        // Collect pre_bb_locksets
+        let mut pre_bb_locksets = HashMap::new();
+        for (bb_idx, _) in body.basic_blocks.iter_enumerated() {
+            cursor.seek_to_block_start(bb_idx);
+            pre_bb_locksets.insert(bb_idx, cursor.get().clone());
+        };
+
+        self.func_lock_info.pre_bb_locksets = pre_bb_locksets;
     }
 
     /// Is the `exit_lockset` of self.result() different from the original result in analyzed_functions.

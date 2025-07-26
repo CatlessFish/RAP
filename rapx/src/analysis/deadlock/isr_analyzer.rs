@@ -315,15 +315,20 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         .iterate_to_fixpoint()
         .into_results_cursor(body);
 
-        let mut bb_irq_states = HashMap::new();
+        let mut post_bb_irq_states = HashMap::new();
+        let mut pre_bb_irq_states = HashMap::new();
         let mut exit_irq_state = IrqState::new();
-        for (bb, _bb_data) in body.basic_blocks.iter_enumerated() {
-            // 1. Record `IrqState` at the end of each BB in `bb_irq_states`
+        for (bb, _) in body.basic_blocks.iter_enumerated() {
+            // 1. Record `IrqState` at the START of each BB in `bb_irq_states`
+            result_cursor.seek_to_block_start(bb);
+            pre_bb_irq_states.insert(bb, result_cursor.get().clone());
+
+            // 2. Record `IrqState` at the END of each BB in `bb_irq_states`
             result_cursor.seek_to_block_end(bb);
             let current_state = result_cursor.get();
-            bb_irq_states.insert(bb, current_state.clone());
+            post_bb_irq_states.insert(bb, current_state.clone());
 
-            // 2. Maintain the `exit_irq_state`.
+            // 3. Maintain the `exit_irq_state`.
             // If the BB's terminator is `Return`, merge its state into `exit_irq_state`
             let loc = body.terminator_loc(bb);
             let terminator = body
@@ -342,7 +347,8 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
             FuncIrqInfo {
                 def_id: func_def_id,
                 exit_irq_state,
-                bb_irq_states,
+                post_bb_irq_states,
+                pre_bb_irq_states,
                 interrupt_enable_sites: Vec::new(),
             },
         );

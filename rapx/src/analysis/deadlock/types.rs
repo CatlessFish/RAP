@@ -9,8 +9,6 @@ extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::fmt::DebugWithContext;
 
 pub mod lock {
-    use rustc_target::abi::call;
-
     use super::*;
 
     /// A `LockInstance` is a `static` variable, with Lock type
@@ -177,10 +175,19 @@ pub mod lock {
     // 函数的锁集信息
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FunctionLockSet {
-        pub func_def_id: DefId,                                // 函数ID
-        pub entry_lockset: LockSet,                       // 入口锁集
-        pub exit_lockset: LockSet,                        // 出口锁集
-        pub bb_locksets: HashMap<BasicBlock, LockSet>,    // 每个基本块的锁集
+        pub func_def_id: DefId,
+
+        /// Lockset at the entry of the function
+        pub entry_lockset: LockSet,
+
+        /// Lockset on return
+        pub exit_lockset: LockSet,
+
+        /// Lockset at the END of each BB
+        pub post_bb_locksets: HashMap<BasicBlock, LockSet>,
+
+        /// Lockset at the BEGIN of each BB
+        pub pre_bb_locksets: HashMap<BasicBlock, LockSet>,
     }
 
     pub type ProgramLockSet = HashMap<DefId, FunctionLockSet>;
@@ -253,7 +260,10 @@ pub mod interrupt {
         pub exit_irq_state: IrqState,
 
         /// 每个Basic Block结束位置的中断开关状态
-        pub bb_irq_states: HashMap<BasicBlock, IrqState>,
+        pub post_bb_irq_states: HashMap<BasicBlock, IrqState>,
+        
+        /// 每个Basic Block开始位置的中断开关状态
+        pub pre_bb_irq_states: HashMap<BasicBlock, IrqState>,
 
         /// 开启中断的位置
         pub interrupt_enable_sites: Vec<CallSite>,
@@ -263,7 +273,7 @@ pub mod interrupt {
         fn eq(&self, other: &Self) -> bool {
             self.def_id == other.def_id &&
             self.exit_irq_state == other.exit_irq_state &&
-            self.bb_irq_states == other.bb_irq_states &&
+            self.post_bb_irq_states == other.post_bb_irq_states &&
             self.interrupt_enable_sites == other.interrupt_enable_sites
         }
     }

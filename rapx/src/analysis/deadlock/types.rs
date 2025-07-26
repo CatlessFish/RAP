@@ -1,12 +1,17 @@
-use rustc_hir::def_id::DefId;
-use rustc_middle::{mir::Location};
 use std::fmt::{self, Formatter, Display};
-use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use rustc_middle::mir::{BasicBlock, Local};
+
+use petgraph::graph::DiGraph;
 
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::fmt::DebugWithContext;
+use rustc_hir::def_id::DefId;
+use rustc_middle::mir::{BasicBlock, Local, Location};
+use rustc_span::Span;
+
+use crate::analysis::deadlock::types::lock::LockInstance;
+
+
 
 pub mod lock {
     use super::*;
@@ -188,6 +193,9 @@ pub mod lock {
 
         /// Lockset at the BEGIN of each BB
         pub pre_bb_locksets: HashMap<BasicBlock, LockSet>,
+
+        /// Which lock is acquired and where
+        pub lock_operations: HashSet<LockSite>,
     }
 
     pub type ProgramLockSet = HashMap<DefId, FunctionLockSet>;
@@ -331,3 +339,26 @@ impl Display for CallSite {
         write!(f, "{:?}, BB {:?}", self.caller_def_id, self.location.block)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockDependencyEdge {
+    /// Where the interrupt happens, and the DefId of the ISR
+    Interrupt(CallSite, DefId),
+
+    /// The callsite, and the DefId of the callee
+    Call(CallSite, DefId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LockSite {
+    pub lock: LockInstance,
+    pub site: CallSite,
+}
+
+impl Display for LockSite {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Lock {} @ {}", self.lock, self.site)
+    }
+}
+
+pub type LockDependencyGraph = DiGraph<LockSite, LockDependencyEdge>;

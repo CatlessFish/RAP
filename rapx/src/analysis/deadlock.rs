@@ -2,8 +2,10 @@ pub mod types;
 pub mod isr_analyzer;
 pub mod lock_collector;
 pub mod lockset_analyzer;
+pub mod ldg_constructor;
 
 use rustc_middle::ty::TyCtxt;
+use crate::analysis::deadlock::ldg_constructor::LDGConstructor;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
 use crate::analysis::deadlock::types::{lock::*, interrupt::*};
@@ -94,7 +96,15 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             &self.program_lock_info.lockmap,
         );
         self.program_lock_set = lockset_analyzer.run();
-        lockset_analyzer.print_result();
+        // lockset_analyzer.print_result();
+
+        // 4. Construct Lock Dependency Graph
+        let mut ldg_constructor = LDGConstructor::new(
+            self.tcx,
+            &self.program_lock_set,
+            &self.program_isr_info
+        );
+        ldg_constructor.run();
     }
 }
 

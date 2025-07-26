@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use rustc_hir::{BodyOwnerKind, def_id::DefId};
 use rustc_middle::mir::{Body, BasicBlock, Location, TerminatorEdges, TerminatorKind, CallReturnPlaces};
 use rustc_middle::ty::TyCtxt;
@@ -84,7 +84,6 @@ impl <'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
             location: Location,
         ) -> TerminatorEdges<'mir, 'tcx> {
         match &terminator.kind {
-            // TODO: record operation site
             TerminatorKind::Call { func, destination, .. } => {
                 if let Some((callee, _args)) = func.const_fn_def() {
                     // 1. Record callsite
@@ -97,6 +96,12 @@ impl <'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                     ) {
                         state.update_lock_state(lock.clone(), LockState::MayHold);
                         state.add_callsite(lock.clone(), CallSite {location, caller_def_id: self.func_def_id});
+
+                        // Record lock operation
+                        self.func_lock_info.lock_operations.insert(LockSite {
+                            lock: lock.clone(),
+                            site: CallSite{caller_def_id: self.func_def_id, location}
+                        });
                     } else {
                         // Otherwise, it's some other function call
                         // 3. Merge the callee's exit_lockset
@@ -155,6 +160,7 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
                 exit_lockset: LockSet::new(),
                 post_bb_locksets: HashMap::new(),
                 pre_bb_locksets: HashMap::new(),
+                lock_operations: HashSet::new(),
             })
             .clone();
         Self {

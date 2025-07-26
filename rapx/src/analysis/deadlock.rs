@@ -77,10 +77,8 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             &self.target_interrupt_apis
         );
         self.program_isr_info = isr_analyzer.run();
-        // self.isr_analysis();
-        // self.print_isr_analysis_result();
+        // isr_analyzer.print_result();
 
-        // TODO: consider alias
         // 2. Collect Locks and LockGuards
         let mut lock_collector = LockCollector::new(
             self.tcx,

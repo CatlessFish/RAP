@@ -6,7 +6,7 @@ use rustc_middle::ty::TyCtxt;
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::{ Analysis, AnalysisDomain, JoinSemiLattice };
 
-use crate::analysis::deadlock::types::lock::*;
+use crate::analysis::deadlock::types::{*, lock::*};
 use crate::analysis::core::call_graph::CallGraph;
 use crate::{rap_info};
 
@@ -41,6 +41,7 @@ pub struct FuncLockSetAnalyzer<'tcx, 'a> {
 
 /// The auxilury struct that implements `Analysis` trait. The fields are all Refs of the outer FuncLockSetAnalyzer
 pub struct FuncLockSetAnalyzerInner<'a> {
+    func_def_id: DefId,
     lockmap: &'a LocalLockMap,
     entry_lockset: &'a LockSet,
     analyzed_functions: &'a HashMap<DefId, FunctionLockSet>,
@@ -62,9 +63,7 @@ impl<'tcx, 'a> AnalysisDomain<'tcx> for FuncLockSetAnalyzerInner<'a> {
     }
 
     fn bottom_value(&self, _body: &rustc_middle::mir::Body<'tcx>) -> Self::Domain {
-        Self::Domain {
-            lock_states: HashMap::new()
-        }
+        Self::Domain::new()
     }
 }
 
@@ -97,6 +96,7 @@ impl <'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                         |(&local, _)| local == destination.local
                     ) {
                         state.update_lock_state(lock.clone(), LockState::MayHold);
+                        state.add_callsite(lock.clone(), CallSite {location, caller_def_id: self.func_def_id});
                     } else {
                         // Otherwise, it's some other function call
                         // 3. Merge the callee's exit_lockset
@@ -114,6 +114,10 @@ impl <'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                     |(&local, _)| local == place.local
                 ) {
                     state.update_lock_state(lock.clone(), LockState::MustNotHold);
+                    // Clear the lock_sites since the lock is released here
+                    if let Some(callsites) = state.lock_sites.get_mut(lock) {
+                        callsites.clear();
+                    }
                 }
             },
             TerminatorKind::Return => {
@@ -169,6 +173,7 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
     pub fn run(&mut self) {
         let body: &Body = self.tcx.optimized_mir(self.func_def_id);
         let result = FuncLockSetAnalyzerInner {
+            func_def_id: self.func_def_id,
             lockmap: &self.lockmap,
             entry_lockset:  &self.entry_lockset,
             analyzed_functions: &self.analyzed_functions,
@@ -300,7 +305,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             if func_info.exit_lockset.is_all_bottom() {
                 continue;
             }
-            rap_info!("{} : {:?}", self.tcx.def_path_str(func_info.func_def_id), func_info.exit_lockset.lock_states);
+            rap_info!("{} : {}", self.tcx.def_path_str(func_info.func_def_id), func_info.exit_lockset);
         }
     }
 }

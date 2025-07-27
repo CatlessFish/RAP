@@ -158,7 +158,6 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
                 func_def_id,
                 entry_lockset: entry_lockset.clone(),
                 exit_lockset: LockSet::new(),
-                post_bb_locksets: HashMap::new(),
                 pre_bb_locksets: HashMap::new(),
                 lock_operations: HashSet::new(),
             })
@@ -307,8 +306,16 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             }
             
             // Does callees need update?
-            for pending in func_analyzer.influenced_callees() {
-                worklist.push_back(pending);
+            for (callee_id, callee_new_entry) in func_analyzer.influenced_callees() {
+                // Update the callee's entry_lockset
+                let mut callee_old_entry = match self.analyzed_functions.get(&callee_id) {
+                    Some(func_info) => func_info.entry_lockset.clone(),
+                    None => LockSet::new(),
+                };
+                callee_old_entry.merge(&callee_new_entry);
+
+                // Then push it into worklist
+                worklist.push_back((callee_id, callee_old_entry));
             }
 
             // Save the result
@@ -324,6 +331,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
                 continue;
             }
             rap_info!("{} : {}", self.tcx.def_path_str(func_info.func_def_id), func_info.exit_lockset);
+            // rap_info!("{:?}", func_info);
         }
     }
 }

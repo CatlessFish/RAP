@@ -188,9 +188,6 @@ pub mod lock {
         /// Lockset on return
         pub exit_lockset: LockSet,
 
-        /// Lockset at the END of each BB
-        pub post_bb_locksets: HashMap<BasicBlock, LockSet>,
-
         /// Lockset at the BEGIN of each BB
         pub pre_bb_locksets: HashMap<BasicBlock, LockSet>,
 
@@ -266,9 +263,6 @@ pub mod interrupt {
 
         /// 函数出口处的中断开关状态
         pub exit_irq_state: IrqState,
-
-        /// 每个Basic Block结束位置的中断开关状态
-        pub post_bb_irq_states: HashMap<BasicBlock, IrqState>,
         
         /// 每个Basic Block开始位置的中断开关状态
         pub pre_bb_irq_states: HashMap<BasicBlock, IrqState>,
@@ -281,7 +275,6 @@ pub mod interrupt {
         fn eq(&self, other: &Self) -> bool {
             self.def_id == other.def_id &&
             self.exit_irq_state == other.exit_irq_state &&
-            self.post_bb_irq_states == other.post_bb_irq_states &&
             self.interrupt_enable_sites == other.interrupt_enable_sites
         }
     }

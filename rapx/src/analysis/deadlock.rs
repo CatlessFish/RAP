@@ -96,7 +96,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             &self.program_lock_info.lockmap,
         );
         self.program_lock_set = lockset_analyzer.run();
-        // lockset_analyzer.print_result();
+        lockset_analyzer.print_result();
 
         // 4. Construct Lock Dependency Graph
         let mut ldg_constructor = LDGConstructor::new(

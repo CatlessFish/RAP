@@ -93,7 +93,7 @@ impl<'tcx, 'a> Visitor<'tcx> for NormalEdgeCollector<'tcx, 'a> {
         terminator: &rustc_middle::mir::Terminator<'tcx>,
         location:rustc_middle::mir::Location,
     ) {
-        // The locksites of MayHold locks in caller
+        // The lockset at callsite
         let callsite_lockset = match self.program_lock_set.get(&self.caller_def_id) {
             Some(func_lockset) => {
                 // This must be Some since we have analyzed that function

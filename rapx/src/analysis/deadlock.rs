@@ -3,17 +3,18 @@ pub mod isr_analyzer;
 pub mod lock_collector;
 pub mod lockset_analyzer;
 pub mod ldg_constructor;
+pub mod deadlock_reporter;
 
 use rustc_middle::ty::TyCtxt;
 use crate::analysis::deadlock::ldg_constructor::LDGConstructor;
 use crate::rap_info;
 use crate::analysis::core::call_graph::CallGraph;
-use crate::analysis::deadlock::types::{lock::*, interrupt::*};
+use crate::analysis::deadlock::types::{interrupt::*, lock::*, LockDependencyGraph};
 use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
 use crate::analysis::deadlock::lock_collector::LockCollector;
 use crate::analysis::deadlock::lockset_analyzer::LockSetAnalyzer;
 
-pub struct DeadlockDetection<'tcx, 'a> {
+pub struct DeadlockDetector<'tcx, 'a> {
     pub tcx: TyCtxt<'tcx>,
     pub callgraph: CallGraph<'tcx>,
     pub target_lock_types: Vec<&'a str>,
@@ -24,10 +25,11 @@ pub struct DeadlockDetection<'tcx, 'a> {
     program_lock_info: ProgramLockInfo,
     program_lock_set: ProgramLockSet,
     program_isr_info: ProgramIsrInfo,
+    lock_dependency_graph: LockDependencyGraph,
 }
 
 
-impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
+impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
@@ -58,12 +60,13 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             program_lock_info: ProgramLockInfo::new(),
             program_lock_set: ProgramLockSet::new(),
             program_isr_info: ProgramIsrInfo::new(),
+            lock_dependency_graph: LockDependencyGraph::new(),
         }
     }
 
     /// Start Interrupt-Aware Deadlock Detection
     /// Note: the detection is currently crate-local
-    pub fn start (&'a mut self) {
+    pub fn run (&'a mut self) {
         rap_info!("Executing Deadlock Detection");
 
         // Steps:
@@ -96,7 +99,7 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             &self.program_lock_info.lockmap,
         );
         self.program_lock_set = lockset_analyzer.run();
-        lockset_analyzer.print_result();
+        // lockset_analyzer.print_result();
 
         // 4. Construct Lock Dependency Graph
         let mut ldg_constructor = LDGConstructor::new(
@@ -105,6 +108,10 @@ impl<'tcx, 'a> DeadlockDetection<'tcx, 'a> where 'tcx: 'a {
             &self.program_isr_info
         );
         ldg_constructor.run();
+        ldg_constructor.print_result();
+        self.lock_dependency_graph = ldg_constructor.into_graph();
+
+        // 5. Detect cycles on LDG
     }
 }
 

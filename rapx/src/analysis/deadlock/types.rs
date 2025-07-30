@@ -2,6 +2,8 @@ use std::fmt::{self, Formatter, Display};
 use std::collections::{HashMap, HashSet};
 
 use petgraph::graph::DiGraph;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::IntoNodeReferences;
 
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::fmt::DebugWithContext;
@@ -10,8 +12,6 @@ use rustc_middle::mir::{BasicBlock, Local, Location};
 use rustc_span::Span;
 
 use crate::analysis::deadlock::types::lock::LockInstance;
-
-
 
 pub mod lock {
     use super::*;
@@ -183,6 +183,7 @@ pub mod lock {
         pub func_def_id: DefId,
 
         /// Lockset at the entry of the function
+        // TODO: record caller to achieve context-sensitive
         pub entry_lockset: LockSet,
 
         /// Lockset on return
@@ -333,15 +334,6 @@ impl Display for CallSite {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LockDependencyEdge {
-    /// Where the interrupt happens, and the DefId of the ISR
-    Interrupt(CallSite, DefId),
-
-    /// The callsite, and the DefId of the callee
-    Call(CallSite, DefId),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LockSite {
     pub lock: LockInstance,
@@ -354,4 +346,84 @@ impl Display for LockSite {
     }
 }
 
-pub type LockDependencyGraph = DiGraph<LockSite, LockDependencyEdge>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockDependencyEdgeType {
+    /// Where the interrupt happens
+    Interrupt(CallSite),
+
+    /// Where the function call happens
+    Call(CallSite),
+}
+
+/// An edge LockSite A -> LockSite B denotes: \
+/// trying to acquire new lock `A.lock` at `A.site`, \
+/// while holding old lock `B.lock` which is acquired at `B.site`.\
+/// `edge_type` denotes how the control flow transferred from B to A, 
+/// whether by function `Call` or `Interrupt`
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LockDependencyEdge {
+    pub edge_type: LockDependencyEdgeType,
+    pub new_lock_site: LockSite,
+    pub old_lock_site: LockSite,
+}
+
+pub type LockDependencyNode = LockInstance;
+
+#[derive(Debug, Clone)]
+pub struct LockDependencyGraph {
+    pub graph: DiGraph<LockDependencyNode, LockDependencyEdge>,
+}
+
+impl LockDependencyGraph {
+    pub fn new() -> Self {
+        Self {
+            graph: DiGraph::new(),
+        }
+    }
+
+    pub fn insert_normal_edge(&mut self, new_lock_site: &LockSite, old_lock_site: &LockSite, call_location: &CallSite) {
+        let new_node_idx = self.node_id_or_insert(&new_lock_site.lock);
+        let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
+        let edge_weight = LockDependencyEdge {
+            edge_type: LockDependencyEdgeType::Call(call_location.clone()),
+            new_lock_site: new_lock_site.clone(),
+            old_lock_site: old_lock_site.clone(),
+        };
+        self.graph.add_edge(new_node_idx, old_node_idx, edge_weight);
+    }
+
+    pub fn insert_interrupt_edge(&mut self, new_lock_site: &LockSite, old_lock_site: &LockSite, interrupt_location: &CallSite) {
+        let new_node_idx = self.node_id_or_insert(&new_lock_site.lock);
+        let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
+        if self.graph.edges_connecting(new_node_idx, old_node_idx).any(
+            |edge| {
+                if let LockDependencyEdgeType::Interrupt(_) = edge.weight().edge_type {
+                    return true
+                } else {
+                    return false
+                }
+            }
+        ) {
+            // Skip if we already have an interrupt edge
+            return;
+        }
+        let edge_weight = LockDependencyEdge {
+            edge_type: LockDependencyEdgeType::Interrupt(interrupt_location.clone()),
+            new_lock_site: new_lock_site.clone(),
+            old_lock_site: old_lock_site.clone(),
+        };
+        self.graph.add_edge(new_node_idx, old_node_idx, edge_weight);
+    }
+
+    pub fn node_id_or_insert(&mut self, lock: &LockInstance) -> NodeIndex {
+        if let Some(idx) = self.graph
+            .node_references()
+            .find(|(_idx, node)| **node == *lock)
+            .map(|(idx, _)| idx)
+        {
+            return idx;
+        } else {
+            self.graph.add_node(lock.clone())
+        }
+    }
+}

@@ -177,17 +177,24 @@ pub mod lock {
         }
     }
 
+    /// Represents where is a function being called
+    /// 1-layer context sensitive
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub enum CallContext {
+        Default,
+        Place(CallSite),
+    }
+
     // 函数的锁集信息
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FunctionLockSet {
         pub func_def_id: DefId,
 
         /// Lockset at the entry of the function
-        // TODO: record caller to achieve context-sensitive
-        pub entry_lockset: LockSet, // HashMap<CallContext, LockSet>
+        pub entry_lockset: HashMap<CallContext, LockSet>,
 
         /// Lockset on return
-        pub exit_lockset: LockSet,
+        pub exit_lockset: HashMap<CallContext, LockSet>,
 
         /// Lockset at the BEGIN of each BB
         pub pre_bb_locksets: HashMap<BasicBlock, LockSet>,
@@ -198,11 +205,14 @@ pub mod lock {
 
     impl Display for FunctionLockSet {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "{:?}\n\tentry: {}\n\texit: {}\n",
+            write!(f, "{:?}\n",
                 self.func_def_id,
-                self.entry_lockset,
-                self.exit_lockset,
             )?;
+            // write!(f, "{:?}\n\tentry: {}\n\texit: {}\n",
+            //     self.func_def_id,
+            //     self.entry_lockset,
+            //     self.exit_lockset,
+            // )?;
             for (bb, lockset) in &self.pre_bb_locksets {
                 write!(f, "{:?}: {}\n", bb, lockset)?;
             }

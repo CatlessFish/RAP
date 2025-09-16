@@ -184,7 +184,7 @@ pub mod lock {
 
         /// Lockset at the entry of the function
         // TODO: record caller to achieve context-sensitive
-        pub entry_lockset: LockSet,
+        pub entry_lockset: LockSet, // HashMap<CallContext, LockSet>
 
         /// Lockset on return
         pub exit_lockset: LockSet,
@@ -194,6 +194,23 @@ pub mod lock {
 
         /// Which lock is acquired and where
         pub lock_operations: HashSet<LockSite>,
+    }
+
+    impl Display for FunctionLockSet {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            write!(f, "{:?}\n\tentry: {}\n\texit: {}\n",
+                self.func_def_id,
+                self.entry_lockset,
+                self.exit_lockset,
+            )?;
+            for (bb, lockset) in &self.pre_bb_locksets {
+                write!(f, "{:?}: {}\n", bb, lockset)?;
+            }
+            for lock_op in &self.lock_operations {
+                write!(f, "lock op: {:?}\n", lock_op)?;
+            }
+            Ok(())
+        }
     }
 
     pub type ProgramLockSet = HashMap<DefId, FunctionLockSet>;
@@ -330,7 +347,7 @@ pub struct CallSite {
 
 impl Display for CallSite {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}, BB {:?}", self.caller_def_id, self.location.block)
+        write!(f, "{:?}, {:?}", self.caller_def_id, self.location.block)
     }
 }
 
@@ -367,6 +384,16 @@ pub struct LockDependencyEdge {
     pub old_lock_site: LockSite,
 }
 
+impl Display for LockDependencyEdge {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Type: {:?}, Old: {:?} @ {:?}, New: {:?} @ {:?}",
+        self.edge_type,
+        self.new_lock_site.lock.def_id, self.new_lock_site.site.caller_def_id,
+        self.old_lock_site.lock.def_id, self.old_lock_site.site.caller_def_id,
+    )
+    }
+}
+
 pub type LockDependencyNode = LockInstance;
 
 #[derive(Debug, Clone)]
@@ -398,6 +425,7 @@ impl LockDependencyGraph {
         if self.graph.edges_connecting(new_node_idx, old_node_idx).any(
             |edge| {
                 if let LockDependencyEdgeType::Interrupt(_) = edge.weight().edge_type {
+                    // FIXME: may mix up old site and new site
                     return true
                 } else {
                     return false

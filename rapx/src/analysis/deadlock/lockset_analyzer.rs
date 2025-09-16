@@ -202,7 +202,7 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
             cursor.seek_to_block_start(loc.block);
             let new_entry_set = cursor.get();
             let old_entry_set = match self.analyzed_functions.get(&callee) {
-                Some(callee_func_info) => &callee_func_info.exit_lockset,
+                Some(callee_func_info) => &callee_func_info.entry_lockset,
                 None => &LockSet::new(),
             };
             if new_entry_set != old_entry_set {

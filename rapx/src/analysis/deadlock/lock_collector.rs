@@ -426,22 +426,12 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
         );
         self.lock_types = locktype_collector.collect();
 
-        // DEBUG
-        for ty in &self.lock_types {
-            rap_info!("Lock Type | {:?}", ty);
-        }
-
         // 3. Collect Lock Instances
         let mut lock_collector = LockInstanceCollector::new(
             self.tcx,
             self.lock_types.clone(),
         );
         self.lock_instances = lock_collector.collect();
-
-        // DEBUG
-        for lock in &self.lock_instances {
-            rap_info!("Lock Instance | {}", self.tcx.def_path_str(lock.def_id));
-        }
 
         // 4. Build LockMap: LockGuardInstance -> LockInstance
         for local_def_id in self.tcx.hir().body_owners() {
@@ -458,11 +448,6 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
             );
             let func_lockmap = lockmap_builder.collect();
 
-            // DEBUG
-            for (local, lock) in func_lockmap.iter() {
-                rap_info!("LockGuard | {} # {:?} -> {}", self.tcx.def_path_str(def_id), local, self.tcx.def_path_str(lock.def_id));
-            }
-
             self.global_lockmap.insert(def_id, func_lockmap);
         }
     }
@@ -473,6 +458,20 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
             lock_instances: self.lock_instances.clone(),
             lockguard_instances: self.lockguard_instances.clone(),
             lockmap: self.global_lockmap.clone(),
+        }
+    }
+
+    pub fn print_result(&self) {
+        for ty in &self.lock_types {
+            rap_info!("Lock Type | {:?}", ty);
+        }
+        for lock in &self.lock_instances {
+            rap_info!("Lock Instance | {}", self.tcx.def_path_str(lock.def_id));
+        }
+        for (def_id, func_lockmap) in self.global_lockmap.iter() {
+            for (local, lock) in func_lockmap.iter() {
+                rap_info!("LockGuard | {} # {:?} -> {}", self.tcx.def_path_str(def_id), local, self.tcx.def_path_str(lock.def_id));
+            }
         }
     }
 }

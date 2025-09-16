@@ -63,8 +63,9 @@ impl<'tcx, 'a> NormalEdgeCollector<'tcx, 'a> {
     /// Analyze function foo() and every callee bar() in foo()
     pub fn collect(mut self) -> LockSitePairsWithCallSite{
         // 1. handle function calls
-        let body: &Body = self.tcx.optimized_mir(self.caller_def_id);
-        self.visit_body(body);
+        // FIXME: Do we need this?
+        // let body: &Body = self.tcx.optimized_mir(self.caller_def_id);
+        // self.visit_body(body);
 
         // 2. handle lock operations in this function
         if let Some(func_info) = self.program_lock_set.get(&self.caller_def_id) {
@@ -268,9 +269,18 @@ impl<'tcx, 'a> LDGConstructor<'tcx, 'a> {
         for (idx, lock) in self.graph.graph.node_references() {
             result.push_str(format!("{} {}\n", idx.index(), lock).as_str());
         }
+        // Calculate edge num
+        let mut call_edge_num = 0;
+        let mut intr_edge_num = 0;
         for edge in self.graph.graph.edge_references() {
-            result.push_str(format!("{} -> {} | {:?}\n", edge.source().index(), edge.target().index(), edge.weight().edge_type).as_str())
+            result.push_str(format!("{} -> {} | {}\n", edge.source().index(), edge.target().index(), edge.weight()).as_str());
+            if let LockDependencyEdgeType::Call(_) = edge.weight().edge_type {
+                call_edge_num += 1;
+            } else {
+                intr_edge_num += 1;
+            }
         }
+        result.push_str(format!("{} call edges, {} intr edges\n", call_edge_num, intr_edge_num).as_str());
         rap_info!("{}", result);
     }
 

@@ -13,6 +13,7 @@ use crate::analysis::deadlock::types::{interrupt::*, lock::*, LockDependencyGrap
 use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
 use crate::analysis::deadlock::lock_collector::LockCollector;
 use crate::analysis::deadlock::lockset_analyzer::LockSetAnalyzer;
+use crate::analysis::deadlock::deadlock_reporter::DeadlockReporter;
 
 pub struct DeadlockDetector<'tcx, 'a> {
     pub tcx: TyCtxt<'tcx>,
@@ -35,13 +36,14 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
             tcx,
             callgraph: CallGraph::new(tcx),
             target_lock_types: vec![
+                "sync::spin::SpinLock",
                 // "sync::mutex::Mutex",
                 // "sync::rwlock::RwLock",
                 // "sync::rwmutex::RwMutex",
-                "sync::spin::SpinLock",
             ],
             target_lockguard_types: vec![
                 "sync::spin::SpinLockGuard_",
+                // "sync::spin::MutexGuard_",
             ],
             target_isr_entries: vec![
                 "arch::x86::iommu::fault::iommu_page_fault_handler",
@@ -91,6 +93,7 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
             &self.target_lockguard_types,
         );
         self.program_lock_info = lock_collector.collect();
+        // lock_collector.print_result();
 
         // 3. Analysis LockSet
         let mut lockset_analyzer = LockSetAnalyzer::new(
@@ -112,6 +115,11 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
         self.lock_dependency_graph = ldg_constructor.into_graph();
 
         // 5. Detect cycles on LDG
+        let mut lock_reporter = DeadlockReporter::new(
+            self.tcx,
+            &self.lock_dependency_graph,
+        );
+        lock_reporter.run();
     }
 }
 

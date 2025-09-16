@@ -56,15 +56,15 @@ impl <'tcx, 'a> DeadlockReporter<'tcx, 'a> {
 }
 
 fn self_cycle_node(graph: &LockDependencyGraph) -> HashSet<(NodeIndex, EdgeIndex)> {
-    // FIXME: missing some nodes
     let mut result: HashSet<(NodeIndex, EdgeIndex)> = HashSet::new();
-    for node_idx in graph.graph.node_indices() {
-        let mut neighbors = graph.graph.neighbors(node_idx);
-        if neighbors.any(|neighbor_idx| neighbor_idx == node_idx) {
-            if let Some(edge_idx) = graph.graph.find_edge(node_idx, node_idx) {
-                if let LockDependencyEdgeType::Interrupt(_) = graph.graph[edge_idx].edge_type {
-                    result.insert((node_idx, edge_idx));
-                }
+    for edge_idx in graph.graph.edge_indices() {
+        if let LockDependencyEdgeType::Call(_) = graph.graph[edge_idx].edge_type {
+            // Temporarily only look for interrupt self cycle
+            continue;
+        }
+        if let Some((start_node, end_node)) = graph.graph.edge_endpoints(edge_idx) {
+            if start_node == end_node {
+                result.insert((start_node, edge_idx));
             }
         }
     }

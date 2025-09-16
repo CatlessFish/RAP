@@ -5,7 +5,6 @@ use rustc_middle::ty::TyCtxt;
 
 extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::{ Analysis, AnalysisDomain, JoinSemiLattice };
-use rustc_target::abi::call;
 
 use crate::analysis::deadlock::types::{*, lock::*};
 use crate::analysis::core::call_graph::CallGraph;
@@ -276,7 +275,7 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
 
 pub struct LockSetAnalyzer<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    callgraph: &'a CallGraph<'tcx>,
+    _callgraph: &'a CallGraph<'tcx>,
     global_lockmap: &'a GlobalLockMap,
 
     analyzed_functions: HashMap<DefId, FunctionLockSet>,
@@ -285,12 +284,12 @@ pub struct LockSetAnalyzer<'tcx, 'a> {
 impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
-        callgraph: &'a CallGraph<'tcx>,
+        _callgraph: &'a CallGraph<'tcx>,
         global_lockmap: &'a GlobalLockMap,
     ) -> Self {
         Self {
             tcx,
-            callgraph,
+            _callgraph,
             global_lockmap,
             analyzed_functions: HashMap::new(),
         }

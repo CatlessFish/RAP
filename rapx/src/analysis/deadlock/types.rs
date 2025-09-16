@@ -434,8 +434,8 @@ impl LockDependencyGraph {
         let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
         if self.graph.edges_connecting(new_node_idx, old_node_idx).any(
             |edge| {
-                if let LockDependencyEdgeType::Interrupt(_) = edge.weight().edge_type {
-                    // FIXME: may mix up old site and new site
+                // If an edge with the same new and old lock_site exists, ignore this insert
+                if edge.weight().new_lock_site == *new_lock_site && edge.weight().old_lock_site == *old_lock_site {
                     return true
                 } else {
                     return false

@@ -197,7 +197,7 @@ pub mod lock {
         pub exit_lockset: HashMap<CallContext, LockSet>,
 
         /// Lockset at the BEGIN of each BB
-        pub pre_bb_locksets: HashMap<BasicBlock, LockSet>,
+        pub pre_bb_locksets: HashMap<CallContext, HashMap<BasicBlock, LockSet>>,
 
         /// Which lock is acquired and where
         pub lock_operations: HashSet<LockSite>,
@@ -213,9 +213,9 @@ pub mod lock {
             //     self.entry_lockset,
             //     self.exit_lockset,
             // )?;
-            for (bb, lockset) in &self.pre_bb_locksets {
-                write!(f, "{:?}: {}\n", bb, lockset)?;
-            }
+            // for (bb, lockset) in &self.pre_bb_locksets {
+            //     write!(f, "{:?}: {}\n", bb, lockset)?;
+            // }
             for lock_op in &self.lock_operations {
                 write!(f, "lock op: {:?}\n", lock_op)?;
             }
@@ -421,12 +421,26 @@ impl LockDependencyGraph {
     pub fn insert_normal_edge(&mut self, new_lock_site: &LockSite, old_lock_site: &LockSite, call_location: &CallSite) {
         let new_node_idx = self.node_id_or_insert(&new_lock_site.lock);
         let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
-        let edge_weight = LockDependencyEdge {
+        let new_edge_weight = LockDependencyEdge {
             edge_type: LockDependencyEdgeType::Call(call_location.clone()),
             new_lock_site: new_lock_site.clone(),
             old_lock_site: old_lock_site.clone(),
         };
-        self.graph.add_edge(new_node_idx, old_node_idx, edge_weight);
+        if self.graph.edges_connecting(new_node_idx, old_node_idx).any(
+            |old_edge| {
+                // If an same egde exists, skip this insert
+                if *old_edge.weight() == new_edge_weight
+                {
+                    return true
+                } else {
+                    return false
+                }
+            }
+        ) {
+            // Skip if we already have this edge
+            return;
+        }
+        self.graph.add_edge(new_node_idx, old_node_idx, new_edge_weight);
     }
 
     pub fn insert_interrupt_edge(&mut self, new_lock_site: &LockSite, old_lock_site: &LockSite, interrupt_location: &CallSite) {
@@ -434,7 +448,7 @@ impl LockDependencyGraph {
         let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
         if self.graph.edges_connecting(new_node_idx, old_node_idx).any(
             |edge| {
-                // If an edge with the same new and old lock_site exists, ignore this insert
+                // If an edge with the same new and old lock_site exists, skip this insert
                 if edge.weight().new_lock_site == *new_lock_site && edge.weight().old_lock_site == *old_lock_site {
                     return true
                 } else {

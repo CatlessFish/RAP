@@ -250,7 +250,11 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
             pre_bb_locksets.insert(bb_idx, cursor.get().clone());
         };
 
-        self.func_lock_info.pre_bb_locksets = pre_bb_locksets;
+        if let Some(target_pre_bb_lockset) = self.func_lock_info.pre_bb_locksets.get_mut(&self.call_context) {
+            *target_pre_bb_lockset = pre_bb_locksets;
+        } else {
+            self.func_lock_info.pre_bb_locksets.insert(self.call_context.clone(), pre_bb_locksets.clone());
+        }
     }
 
     /// Is the `exit_lockset` of self.result() different from the original result in analyzed_functions.
@@ -313,7 +317,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             worklist.push_back((def_id, CallContext::Default, LockSet::new()));
         };
 
-        let mut iteration_limit = 10 * worklist.len();
+        let mut iteration_limit = 1000 * worklist.len();
         while iteration_limit > 0 && !worklist.is_empty() {
             iteration_limit -= 1;
             // Work on function with `func_def_id`
@@ -382,6 +386,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             // Save the result
             self.analyzed_functions.insert(func_def_id, func_analyzer.result());
         }
+        rap_info!("Remaining iteration quota: {}", iteration_limit);
 
         self.analyzed_functions.clone()
     }

@@ -62,28 +62,26 @@ impl<'tcx, 'a> NormalEdgeCollector<'tcx, 'a> {
 
     /// Analyze function foo() and every callee bar() in foo()
     pub fn collect(mut self) -> LockSitePairsWithCallSite{
-        // 1. handle function calls
-        // FIXME: Do we need this?
-        // let body: &Body = self.tcx.optimized_mir(self.caller_def_id);
-        // self.visit_body(body);
-
-        // 2. handle lock operations in this function
+        // handle lock operations in this function
         if let Some(func_info) = self.program_lock_set.get(&self.caller_def_id) {
             for new_lock_site in func_info.lock_operations.iter() {
-                if let Some(current_lockset) = func_info.pre_bb_locksets.get(&new_lock_site.site.location.block) {
-                    let held_lock_sites: HashSet<LockSite> = current_lockset.lock_sites
-                        .iter()
-                        .filter(
-                            |(lock, _)|
-                            current_lockset.lock_states.get(lock).is_some_and(|state| *state == LockState::MayHold)
-                        )
-                        .flat_map(
-                            |(lock, callsites)|
-                            callsites.iter().map(|callsite| LockSite {lock: lock.clone(), site: *callsite})
-                        )
-                        .collect();
-                    for held_lock_site in held_lock_sites {
-                        self.locksite_pairs.insert((new_lock_site.clone(), held_lock_site, new_lock_site.site));
+                for (_context, pre_bb_lockset) in &func_info.pre_bb_locksets {
+                    // analyze under each context
+                    if let Some(current_lockset) = pre_bb_lockset.get(&new_lock_site.site.location.block) {
+                        let held_lock_sites: HashSet<LockSite> = current_lockset.lock_sites
+                            .iter()
+                            .filter(
+                                |(lock, _)|
+                                current_lockset.lock_states.get(lock).is_some_and(|state| *state == LockState::MayHold)
+                            )
+                            .flat_map(
+                                |(lock, callsites)|
+                                callsites.iter().map(|callsite| LockSite {lock: lock.clone(), site: *callsite})
+                            )
+                            .collect();
+                        for held_lock_site in held_lock_sites {
+                            self.locksite_pairs.insert((new_lock_site.clone(), held_lock_site, new_lock_site.site));
+                        }
                     }
                 }
             }
@@ -91,41 +89,6 @@ impl<'tcx, 'a> NormalEdgeCollector<'tcx, 'a> {
 
         
         self.locksite_pairs
-    }
-}
-
-impl<'tcx, 'a> Visitor<'tcx> for NormalEdgeCollector<'tcx, 'a> {
-    fn visit_terminator(
-        &mut self,
-        terminator: &rustc_middle::mir::Terminator<'tcx>,
-        location:rustc_middle::mir::Location,
-    ) {
-        // The lockset at callsite
-        let callsite_lockset = match self.program_lock_set.get(&self.caller_def_id) {
-            Some(func_lockset) => {
-                // This must be Some since we have analyzed that function
-                func_lockset.pre_bb_locksets.get(&location.block).unwrap()
-            },
-            None => return
-        };
-        match &terminator.kind {
-            TerminatorKind::Call { func, .. } => {
-                if let Some((callee_def_id, _)) = func.const_fn_def() {
-                    if let Some(callee_func_info) = self.program_lock_set.get(&callee_def_id) {
-                        self.locksite_pairs.extend(
-                            extract_locksite_pairs(callsite_lockset, &callee_func_info.lock_operations)
-                                    .iter()
-                                    .map(
-                                        // Append CallSite information
-                                        |pair| 
-                                        (pair.0.clone(), pair.1.clone(), CallSite {caller_def_id: self.caller_def_id, location})
-                                    )
-                        );
-                    }
-                }
-            },
-            _ => {},
-        }
     }
 }
 
@@ -181,29 +144,33 @@ impl<'tcx, 'a> Visitor<'tcx> for InterruptEdgeCollector<'tcx, 'a> {
         }
 
         // 2. Get the lockset of current position
-        let callsite_lockset = match self.program_lock_set.get(&self.func_def_id) {
+        let all_context = match self.program_lock_set.get(&self.func_def_id) {
             Some(func_info) => {
                 // This must be Some since we have analyzed that function
-                func_info.pre_bb_locksets.get(&location.block).unwrap()
+                &func_info.pre_bb_locksets
             },
             None => return,
         };
 
-        // 3. Iterate through all isr functions
-        for isr_def_id in self.program_isr_info.isr_funcs.iter() {
-            let isr_lock_ops = match self.program_lock_set.get(isr_def_id) {
-                Some(func_info) => &func_info.lock_operations,
-                None => continue,
-            };
-            self.locksite_pairs.extend(
-                extract_locksite_pairs(callsite_lockset, isr_lock_ops)
-                    .iter()
-                    .map(
-                        // Append CallSite information
-                        |pair|
-                        (pair.0.clone(), pair.1.clone(), CallSite {caller_def_id: self.func_def_id, location})
-                    )
-            );
+        // 3. Iterate through all context
+        for (_context, pre_bb_lockset) in all_context {
+            let callsite_lockset = pre_bb_lockset.get(&location.block).unwrap(); // This must be Some() since we have analyzed the function
+            // 4. Iterate through all isr functions
+            for isr_def_id in self.program_isr_info.isr_funcs.iter() {
+                let isr_lock_ops = match self.program_lock_set.get(isr_def_id) {
+                    Some(func_info) => &func_info.lock_operations,
+                    None => continue,
+                };
+                self.locksite_pairs.extend(
+                    extract_locksite_pairs(callsite_lockset, isr_lock_ops)
+                        .iter()
+                        .map(
+                            // Append CallSite information
+                            |pair|
+                            (pair.0.clone(), pair.1.clone(), CallSite {caller_def_id: self.func_def_id, location})
+                        )
+                );
+            }
         }
     }
 }

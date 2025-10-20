@@ -9,6 +9,8 @@ use rustc_hir::def::DefKind;
 use rustc_middle::mir::Body;
 use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::InstanceKind;
+
+use crate::rap_info;
 pub struct CallGraph<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub graph: CallGraphInfo,
@@ -29,29 +31,47 @@ impl<'tcx> CallGraph<'tcx> {
     }
 
     pub fn start(&mut self) {
-        for local_def_id in self.tcx.iter_local_def_id() {
-            let hir_map = self.tcx.hir();
-            if hir_map.maybe_body_owned_by(local_def_id).is_some() {
-                let def_id = local_def_id.to_def_id();
-                if self.tcx.is_mir_available(def_id) {
-                    let def_kind = self.tcx.def_kind(def_id);
-                    let body: &Body = match def_kind {
-                        DefKind::Const | DefKind::Static { .. } => {
-                            // Compile Time Function Evaluation
-                            &self.tcx.mir_for_ctfe(def_id)
-                        }
-                        // using optimizied_mir() may cause ICE: do not use `optimized_mir` for constants
-                        // see https://github.com/rust-lang/rust/issues/81918
-                        _ => &self.tcx.instance_mir(InstanceKind::Item(def_id)),
-                    };
-                    let mut call_graph_visitor =
-                        CallGraphVisitor::new(self.tcx, def_id.into(), body, &mut self.graph);
-                    call_graph_visitor.visit();
-                }
+        for local_def_id in self.tcx.hir().body_owners() {
+            let def_id = local_def_id.to_def_id();
+            if self.tcx.is_mir_available(def_id) {
+                let def_kind = self.tcx.def_kind(def_id);
+                let body: &Body = match def_kind {
+                    DefKind::Fn | DefKind::AssocFn => &self.tcx.instance_mir(InstanceKind::Item(def_id)),
+                    // using optimizied_mir() may cause ICE: do not use `optimized_mir` for constants
+                    // see https://github.com/rust-lang/rust/issues/81918
+
+                    // Fallbacks for const types
+                    DefKind::Const 
+                    | DefKind::Static { .. }
+                    | DefKind::AssocConst
+                    | DefKind::InlineConst
+                    | DefKind::AnonConst => {
+                        // Compile Time Function Evaluation
+                        &self.tcx.mir_for_ctfe(def_id)
+                    }
+
+                    // Skip other type
+                    _ => continue,
+                };
+
+
+                let mut call_graph_visitor =
+                    CallGraphVisitor::new(self.tcx, def_id.into(), body, &mut self.graph);
+                call_graph_visitor.visit();
             }
         }
         if !self.quiet {
             self.graph.print_call_graph();
+        }
+
+        // DEBUG
+        for (func_name, index) in &self.graph.node_registry {
+            rap_info!("{} | {}", index, func_name);
+        }
+        for (caller, callees) in &self.graph.function_calls {
+           for callee in callees {
+                rap_info!("{} -> {}", caller, callee);
+           }
         }
     }
 

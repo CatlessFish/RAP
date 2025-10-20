@@ -23,8 +23,7 @@ impl<'tcx> Analysis for CallGraphAnalyzer<'tcx> {
     }
 
     fn run(&mut self) {
-        let mut analysis = CallGraphAnalyzer::new(self.tcx);
-        analysis.start();
+        self.start();
     }
 
     fn reset(&mut self) {

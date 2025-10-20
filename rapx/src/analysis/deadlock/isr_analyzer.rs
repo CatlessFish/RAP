@@ -360,7 +360,7 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         rap_info!("==== ISR Analysis Results ====");
 
         for isr_func in self.program_isr_info.isr_funcs.iter() {
-            rap_info!("May be ISR func: {} ", self.tcx.def_path_str(isr_func));
+            rap_info!("ISR func: {} ", self.tcx.def_path_str(isr_func));
         }
 
         let mut count = 0;

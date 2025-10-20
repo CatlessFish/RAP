@@ -53,6 +53,9 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
                 "arch::x86::timer::timer_callback",
                 "smp::do_inter_processor_call",
                 "mm::tlb::do_remote_flush", // This is added manually
+                "mm::page::meta::drop_as_last", // This is added manually
+                "<logger::Logger as log::Log>::log", // This is added manually
+                "panicking::panic_handler", // Panic context
             ],
             target_interrupt_apis: vec![
                 ("arch::x86::irq::enable_local", InterruptApiType::Enable),
@@ -84,7 +87,7 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
             &self.target_interrupt_apis
         );
         self.program_isr_info = isr_analyzer.run();
-        // isr_analyzer.print_result();
+        isr_analyzer.print_result();
 
         // 2. Collect Locks and LockGuards
         let mut lock_collector = LockCollector::new(

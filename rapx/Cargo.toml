@@ -47,6 +47,21 @@ itertools = "0.14.0"
 safety-parser = "0.3.7"
 syn = { version = "2", features = ["extra-traits", "full"] }
 
+# rustc_private, only for local development
+[dev-dependencies]
+rustc_mir_dataflow = { path = "../../symlink_rustc_src_2025-09-10/rustc_mir_dataflow" }
+rustc_data_structures = { path = "../../symlink_rustc_src_2025-09-10/rustc_data_structures" }
+rustc_driver = { path = "../../symlink_rustc_src_2025-09-10/rustc_driver" }
+rustc_errors = { path = "../../symlink_rustc_src_2025-09-10/rustc_errors" }
+rustc_hir = { path = "../../symlink_rustc_src_2025-09-10/rustc_hir" }
+rustc_index = { path = "../../symlink_rustc_src_2025-09-10/rustc_index" }
+rustc_interface = { path = "../../symlink_rustc_src_2025-09-10/rustc_interface" }
+rustc_metadata = { path = "../../symlink_rustc_src_2025-09-10/rustc_metadata" }
+rustc_middle = { path = "../../symlink_rustc_src_2025-09-10/rustc_middle" }
+rustc_session = { path = "../../symlink_rustc_src_2025-09-10/rustc_session" }
+rustc_span = { path = "../../symlink_rustc_src_2025-09-10/rustc_span" }
+rustc_target = { path = "../../symlink_rustc_src_2025-09-10/rustc_target" }
+
 [features]
 backtraces = ["snafu/backtraces", "snafu/backtraces-impl-backtrace-crate"]
 

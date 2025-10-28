@@ -1,14 +1,14 @@
-use std::collections::{HashMap, HashSet};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Body, BasicBlock, Location, Statement, Terminator, TerminatorEdges, TerminatorKind, CallReturnPlaces};
+use rustc_middle::mir::{Body, Location, Statement, Terminator, TerminatorEdges, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
+use std::collections::{HashMap, HashSet};
 
 extern crate rustc_mir_dataflow;
-use rustc_mir_dataflow::{ Analysis, AnalysisDomain, JoinSemiLattice };
+use rustc_mir_dataflow::{Analysis, JoinSemiLattice};
 
+use crate::analysis::core::callgraph::default::CallGraphInfo;
 use crate::analysis::deadlock::types::interrupt::*;
-use crate::analysis::core::call_graph::CallGraph;
-use crate::{rap_info, rap_debug};
+use crate::{rap_debug, rap_info};
 
 impl JoinSemiLattice for IrqState {
     fn join(&mut self, other: &Self) -> bool {
@@ -47,82 +47,71 @@ impl<'tcx, 'a> FuncIsrAnalyzer<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> AnalysisDomain<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
+impl<'tcx, 'a> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
     type Domain = IrqState;
 
     const NAME: &'static str = "ISRAnalysis";
 
-    fn bottom_value(&self, _body: &Body<'tcx>) -> <Self as AnalysisDomain<'tcx>>::Domain {
+    fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
         IrqState::new()
     }
 
     fn initialize_start_block(
-        &self, 
-        _body: &Body<'tcx>, 
-        state: &mut <Self as AnalysisDomain<'tcx>>::Domain
+        &self,
+        _body: &rustc_middle::mir::Body<'tcx>,
+        state: &mut Self::Domain,
     ) {
         *state = IrqState::new()
     }
-}
 
-impl<'tcx, 'a> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
-    fn apply_statement_effect(
-            &mut self,
-            _state: &mut <Self as AnalysisDomain<'tcx>>::Domain,
-            _statement: &Statement<'tcx>,
-            _location: Location,
-        ) {
+    fn apply_primary_statement_effect(
+        &mut self,
+        _state: &mut Self::Domain,
+        _statement: &Statement<'tcx>,
+        _location: Location,
+    ) {
         // We don't care about normal statements, since they don't affect Irq state.
     }
 
-    fn apply_terminator_effect<'air>(
-            &mut self,
-            state: &mut <Self as AnalysisDomain<'tcx>>::Domain,
-            terminator: &'air Terminator<'tcx>,
-            _location: Location,
-        ) -> TerminatorEdges<'air, 'tcx> {
-            if let TerminatorKind::Call { func, .. } = &terminator.kind {
-                // Handle call return effects
-                if let Some(callee_def_id) = func.const_fn_def() {
-                    // Check if it's an interrupt API
-                    let mut found_api = false;
-                    if self.enable_interrupt_apis.contains(&callee_def_id.0) {
-                        found_api = true;
-                        // Update current state
-                        *state = IrqState::MayBeEnabled;
-                    }
+    fn apply_primary_terminator_effect<'air>(
+        &mut self,
+        state: &mut Self::Domain,
+        terminator: &'air Terminator<'tcx>,
+        _location: Location,
+    ) -> TerminatorEdges<'air, 'tcx> {
+        if let TerminatorKind::Call { func, .. } = &terminator.kind {
+            // Handle call return effects
+            if let Some(callee_def_id) = func.const_fn_def() {
+                // Check if it's an interrupt API
+                let mut found_api = false;
+                if self.enable_interrupt_apis.contains(&callee_def_id.0) {
+                    found_api = true;
+                    // Update current state
+                    *state = IrqState::MayBeEnabled;
+                }
 
-                    if self.disable_interrupt_apis.contains(&callee_def_id.0) {
-                        found_api = true;
-                        // Update current state
-                        *state = IrqState::MustBeDisabled;
-                    }
+                if self.disable_interrupt_apis.contains(&callee_def_id.0) {
+                    found_api = true;
+                    // Update current state
+                    *state = IrqState::MustBeDisabled;
+                }
 
-                    // If not an interrupt API, check if it's a regular function call
-                    if !found_api && self.tcx.is_mir_available(callee_def_id.0) {
-                        // Merge the exit interrupt set of the called function
-                        if let Some(callee_info) = self.analyzed_functions.get(&callee_def_id.0) {
-                            state.join(&callee_info.exit_irq_state);
-                        }
+                // If not an interrupt API, check if it's a regular function call
+                if !found_api && self.tcx.is_mir_available(callee_def_id.0) {
+                    // Merge the exit interrupt set of the called function
+                    if let Some(callee_info) = self.analyzed_functions.get(&callee_def_id.0) {
+                        state.join(&callee_info.exit_irq_state);
                     }
                 }
             }
-            terminator.edges()
         }
-
-    fn apply_call_return_effect(
-            &mut self,
-            _state: &mut <Self as AnalysisDomain<'tcx>>::Domain,
-            _block: BasicBlock,
-            _return_places: CallReturnPlaces<'_, 'tcx>,
-        ) {
-        // Do nothing
+        terminator.edges()
     }
 }
 
 pub struct IsrAnalyzer<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    callgraph: &'a CallGraph<'tcx>,
+    callgraph: &'a CallGraphInfo<'tcx>,
     target_isr_entries: &'a Vec<&'a str>,
     target_interrupt_apis: &'a Vec<(&'a str, InterruptApiType)>,
     enable_interrupt_apis: Vec<DefId>,
@@ -133,7 +122,7 @@ pub struct IsrAnalyzer<'tcx, 'a> {
 impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
-        callgraph: &'a CallGraph<'tcx>,
+        callgraph: &'a CallGraphInfo<'tcx>,
         target_isr_entries: &'a Vec<&'a str>,
         target_interrupt_apis: &'a Vec<(&'a str, InterruptApiType)>,
     ) -> Self {
@@ -152,14 +141,14 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         // Steps:
         // 1. Collect a set of ISRs
         self.collect_isr();
-        
+
         // 2. Collect a set of interrupt APIs
         self.collect_interrupt_apis();
-        
+
         // 3. Calculate interrupt sets for each function
         // This step is inter-procedural
         self.analyze_interrupt_set();
-        
+
         rap_info!("Collected {} ISRs", self.program_isr_info.isr_funcs.len());
         self.program_isr_info.clone()
     }
@@ -167,7 +156,7 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     /// Collect the `DefIds` of `target_isr_entries` and their (recursively) callees
     fn collect_isr(&mut self) {
         let mut isr_def_ids: HashMap<String, DefId> = HashMap::new();
-        for local_def_id in self.tcx.hir().body_owners() {
+        for local_def_id in self.tcx.hir_body_owners() {
             let def_id = local_def_id.to_def_id();
             let fn_name = self.tcx.def_path_str(def_id);
             if self.target_isr_entries.contains(&fn_name.as_str()) {
@@ -187,7 +176,10 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
                 isr_funcs.insert(isr_def_id.clone());
 
                 // then, find all possible callees
-                if let Some(callees) = self.callgraph.graph.get_callees_defid_recursive(&isr_entry.to_string()) {
+                if let Some(callees) = self
+                    .callgraph
+                    .get_callees_defid_recursive(&isr_entry.to_string())
+                {
                     for callee in callees {
                         isr_funcs.insert(callee);
                     }
@@ -196,7 +188,10 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         }
 
         for isr_func in isr_funcs.iter() {
-            rap_debug!("Function {} may be a ISR function", self.tcx.def_path_str(isr_func));
+            rap_debug!(
+                "Function {} may be a ISR function",
+                self.tcx.def_path_str(isr_func)
+            );
         }
 
         self.program_isr_info.isr_funcs = isr_funcs;
@@ -206,10 +201,10 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     /// into `self.enable_interrupt_apis` and `self.disable_interrupt_apis`
     fn collect_interrupt_apis(&mut self) {
         // Iterate through all functions
-        for local_def_id in self.tcx.hir().body_owners() {
+        for local_def_id in self.tcx.hir_body_owners() {
             // filter const mir
             // FIXME: explain this
-            if let Some(_other) = self.tcx.hir().body_const_context(local_def_id) {
+            if let Some(_other) = self.tcx.hir_body_const_context(local_def_id) {
                 continue;
             }
 
@@ -237,9 +232,9 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         let mut recursion_stack: HashSet<DefId> = HashSet::new();
 
         // Iterate through all functions
-        for local_def_id in self.tcx.hir().body_owners() {
+        for local_def_id in self.tcx.hir_body_owners() {
             /* filter const mir */
-            if let Some(_other) = self.tcx.hir().body_const_context(local_def_id) {
+            if let Some(_other) = self.tcx.hir_body_const_context(local_def_id) {
                 continue;
             }
 
@@ -293,7 +288,6 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         // First collect callees, and analyze them first
         if let Some(callees) = self
             .callgraph
-            .graph
             .get_callees_defid(&self.tcx.def_path_str(func_def_id))
         {
             for callee in callees {
@@ -311,8 +305,7 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
             self.disable_interrupt_apis.clone(),
             &analyzed_functions,
         )
-        .into_engine(self.tcx, body)
-        .iterate_to_fixpoint()
+        .iterate_to_fixpoint(self.tcx, body, None)
         .into_results_cursor(body);
 
         let mut pre_bb_irq_states = HashMap::new();
@@ -355,7 +348,6 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         recursion_stack.remove(&func_def_id);
     }
 
-    
     pub fn print_result(&self) {
         rap_info!("==== ISR Analysis Results ====");
 
@@ -368,7 +360,11 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
             if func_info.exit_irq_state == IrqState::Bottom {
                 continue;
             }
-            rap_info!("Func: {},\t IRQ {}", self.tcx.def_path_str(def_id), func_info);
+            rap_info!(
+                "Func: {},\t IRQ {}",
+                self.tcx.def_path_str(def_id),
+                func_info
+            );
             count += 1;
         }
         rap_info!("==== ISR Analysis Results End ({} ISR entries, {} non-trivial interrupt set functions) ====", self.program_isr_info.isr_entries.len(), count);

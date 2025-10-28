@@ -40,6 +40,7 @@ fn main() {
             "-callgraph" => compiler.enable_callgraph(),
             "-dataflow" => compiler.enable_dataflow(1),
             "-dataflow=debug" => compiler.enable_dataflow(2),
+            "-deadlock" => compiler.enable_deadlock(),
             "-ownedheap" => compiler.enable_ownedheap(),
             "-range" => compiler.enable_range_analysis(1),
             "-range=print_mir" => compiler.enable_range_analysis(2),

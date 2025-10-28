@@ -1,14 +1,15 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use rustc_hir::{BodyOwnerKind, def_id::DefId};
-use rustc_middle::mir::{Body, BasicBlock, Location, TerminatorEdges, TerminatorKind, CallReturnPlaces};
+use rustc_hir::{def_id::DefId, BodyOwnerKind};
+use rustc_middle::mir::{
+    BasicBlock, Body, CallReturnPlaces, Location, TerminatorEdges, TerminatorKind,
+};
 use rustc_middle::ty::TyCtxt;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 extern crate rustc_mir_dataflow;
-use rustc_mir_dataflow::{ Analysis, AnalysisDomain, JoinSemiLattice };
+use rustc_mir_dataflow::{Analysis, JoinSemiLattice};
 
-use crate::analysis::deadlock::types::{*, lock::*};
-use crate::analysis::core::call_graph::CallGraph;
-use crate::{rap_info};
+use crate::analysis::deadlock::types::{lock::*, *};
+use crate::rap_info;
 
 impl JoinSemiLattice for LockSet {
     fn join(&mut self, other: &Self) -> bool {
@@ -53,8 +54,7 @@ pub struct FuncLockSetAnalyzerInner<'a> {
     callsites: &'a mut HashMap<Location, DefId>,
 }
 
-impl<'tcx, 'a> AnalysisDomain<'tcx> for FuncLockSetAnalyzerInner<'a> {
-    // Only analyze a certain lockset each time, so Domain is LockSet
+impl<'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
     type Domain = LockSet;
 
     const NAME: &'static str = "FuncLockSetAnalysis";
@@ -62,7 +62,7 @@ impl<'tcx, 'a> AnalysisDomain<'tcx> for FuncLockSetAnalyzerInner<'a> {
     fn initialize_start_block(
         &self,
         _body: &rustc_middle::mir::Body<'tcx>,
-        state: &mut Self::Domain
+        state: &mut Self::Domain,
     ) {
         *state = if let Some(entry_set) = self.entry_lockset.get(&self.call_context) {
             entry_set.clone()
@@ -74,42 +74,53 @@ impl<'tcx, 'a> AnalysisDomain<'tcx> for FuncLockSetAnalyzerInner<'a> {
     fn bottom_value(&self, _body: &rustc_middle::mir::Body<'tcx>) -> Self::Domain {
         Self::Domain::new()
     }
-}
 
-impl <'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
-    fn apply_statement_effect(
-            &mut self,
-            _state: &mut Self::Domain,
-            _statement: &rustc_middle::mir::Statement<'tcx>,
-            _location: Location,
-        ) {
+    fn apply_primary_statement_effect(
+        &mut self,
+        _state: &mut Self::Domain,
+        _statement: &rustc_middle::mir::Statement<'tcx>,
+        _location: Location,
+    ) {
         // Do nothing
     }
 
-    fn apply_terminator_effect<'mir>(
-            &mut self,
-            state: &mut Self::Domain,
-            terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
-            location: Location,
-        ) -> TerminatorEdges<'mir, 'tcx> {
+    fn apply_primary_terminator_effect<'mir>(
+        &mut self,
+        state: &mut Self::Domain,
+        terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
+        location: Location,
+    ) -> TerminatorEdges<'mir, 'tcx> {
         match &terminator.kind {
-            TerminatorKind::Call { func, destination, .. } => {
+            TerminatorKind::Call {
+                func, destination, ..
+            } => {
                 if let Some((callee, _args)) = func.const_fn_def() {
                     // 1. Record callsite
                     self.callsites.insert(location, callee);
 
                     // 2. Check if destination is a LockGuard. If yes, we suppose it's a lock api call
                     // TODO: support non-lock function call with lockguard as return type
-                    if let Some((_, lock)) = self.lockmap.iter().find(
-                        |(&local, _)| local == destination.local
-                    ) {
+                    if let Some((_, lock)) = self
+                        .lockmap
+                        .iter()
+                        .find(|(&local, _)| local == destination.local)
+                    {
                         state.update_lock_state(lock.clone(), LockState::MayHold);
-                        state.add_callsite(lock.clone(), CallSite {location, caller_def_id: self.func_def_id});
+                        state.add_callsite(
+                            lock.clone(),
+                            CallSite {
+                                location,
+                                caller_def_id: self.func_def_id,
+                            },
+                        );
 
                         // Record lock operation
                         self.func_lock_info.lock_operations.insert(LockSite {
                             lock: lock.clone(),
-                            site: CallSite{caller_def_id: self.func_def_id, location}
+                            site: CallSite {
+                                caller_def_id: self.func_def_id,
+                                location,
+                            },
                         });
                     } else {
                         // Otherwise, it's some other function call
@@ -117,56 +128,64 @@ impl <'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                         let callee_exit_lockset = match self.analyzed_functions.get(&callee) {
                             Some(callee_func_info) => {
                                 // Find the corresponding exit_lockset to this function call site
-                                let inner_context = CallContext::Place(CallSite {caller_def_id: self.func_def_id, location});
-                                if let Some(exit_set) = callee_func_info.exit_lockset.get(&inner_context) {
+                                let inner_context = CallContext::Place(CallSite {
+                                    caller_def_id: self.func_def_id,
+                                    location,
+                                });
+                                if let Some(exit_set) =
+                                    callee_func_info.exit_lockset.get(&inner_context)
+                                {
                                     exit_set
                                 } else {
                                     &LockSet::new()
                                 }
-                            },
+                            }
                             None => &LockSet::new(),
                         };
                         state.merge(callee_exit_lockset);
                     }
                 };
-            },
+            }
             TerminatorKind::Drop { place, .. } => {
                 // Dropping a lockguard releases the lock
-                if let Some((_, lock)) = self.lockmap.iter().find(
-                    |(&local, _)| local == place.local
-                ) {
+                if let Some((_, lock)) =
+                    self.lockmap.iter().find(|(&local, _)| local == place.local)
+                {
                     state.update_lock_state(lock.clone(), LockState::MustNotHold);
                     // Clear the lock_sites since the lock is released here
                     if let Some(callsites) = state.lock_sites.get_mut(lock) {
                         callsites.clear();
                     }
                 }
-            },
+            }
             TerminatorKind::Return => {
                 // Update the corresponding exit state
-                if let Some(target_set) = self.func_lock_info.exit_lockset.get_mut(&self.call_context) {
+                if let Some(target_set) =
+                    self.func_lock_info.exit_lockset.get_mut(&self.call_context)
+                {
                     target_set.merge(state);
+                } else {
+                    self.func_lock_info
+                        .exit_lockset
+                        .insert(self.call_context.clone(), state.clone());
                 }
-                else {
-                    self.func_lock_info.exit_lockset.insert(self.call_context.clone(), state.clone());
-                }
-            },
-            _ => {},
+            }
+            _ => {}
         }
         terminator.edges()
     }
 
     fn apply_call_return_effect(
-            &mut self,
-            _state: &mut Self::Domain,
-            _block: BasicBlock,
-            _return_places: CallReturnPlaces<'_, 'tcx>,
-        ) {
+        &mut self,
+        _state: &mut Self::Domain,
+        _block: BasicBlock,
+        _return_places: CallReturnPlaces<'_, 'tcx>,
+    ) {
         // Do nothing
     }
 }
 
-impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
+impl<'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         func_def_id: DefId,
@@ -206,20 +225,19 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
             func_def_id: self.func_def_id,
             call_context: self.call_context.clone(),
             lockmap: &self.lockmap,
-            entry_lockset:  &self.entry_lockset,
+            entry_lockset: &self.entry_lockset,
             analyzed_functions: &self.analyzed_functions,
             func_lock_info: &mut self.func_lock_info,
             callsites: &mut self.callsites,
         }
-            .into_engine(self.tcx, body)
-            .iterate_to_fixpoint();
+        .iterate_to_fixpoint(self.tcx, body, None);
 
         // Clone callsites to avoid longer reference
         let callsites = result.analysis.callsites.clone();
 
         // The result has been stored in self.func_lock_info, except pre_bb_locksets
         let mut cursor = result.into_results_cursor(body);
-        
+
         // Now calculate influenced_callees.
         for (loc, callee) in callsites.iter() {
             // Note that bb_locksets are lockset AFTER the bb's terminator (e.g. after function call),
@@ -228,27 +246,32 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
             let new_entry_set = cursor.get();
             let old_entry_set = match self.analyzed_functions.get(&callee) {
                 Some(callee_func_info) => {
-                    if let Some(entry_set) = callee_func_info.entry_lockset.get(&self.call_context) {
+                    if let Some(entry_set) = callee_func_info.entry_lockset.get(&self.call_context)
+                    {
                         entry_set
                     } else {
                         &LockSet::new()
                     }
-                },
+                }
                 None => &LockSet::new(),
             };
             if new_entry_set != old_entry_set {
-                let inner_context = CallContext::Place(CallSite { caller_def_id: self.func_def_id, location: *loc });
-                self.influenced_callees.insert(*callee, (inner_context, new_entry_set.clone()));
+                let inner_context = CallContext::Place(CallSite {
+                    caller_def_id: self.func_def_id,
+                    location: *loc,
+                });
+                self.influenced_callees
+                    .insert(*callee, (inner_context, new_entry_set.clone()));
             }
         }
-        
+
         // pre_bb_locksets is now available after the analysis is finished
         // Collect pre_bb_locksets
         let mut pre_bb_locksets = HashMap::new();
         for (bb_idx, _) in body.basic_blocks.iter_enumerated() {
             cursor.seek_to_block_start(bb_idx);
             pre_bb_locksets.insert(bb_idx, cursor.get().clone());
-        };
+        }
 
         self.func_lock_info.pre_bb_locksets = pre_bb_locksets;
     }
@@ -258,7 +281,7 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
     pub fn exit_changed(&self) -> bool {
         match self.analyzed_functions.get(&self.func_def_id) {
             Some(old_result) => old_result.exit_lockset != self.func_lock_info.exit_lockset,
-            None => true
+            None => true,
         }
     }
 
@@ -275,43 +298,35 @@ impl <'tcx, 'a> FuncLockSetAnalyzer<'tcx, 'a> {
 
 pub struct LockSetAnalyzer<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    _callgraph: &'a CallGraph<'tcx>,
     global_lockmap: &'a GlobalLockMap,
-
     analyzed_functions: HashMap<DefId, FunctionLockSet>,
 }
 
-impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
-    pub fn new(
-        tcx: TyCtxt<'tcx>,
-        _callgraph: &'a CallGraph<'tcx>,
-        global_lockmap: &'a GlobalLockMap,
-    ) -> Self {
+impl<'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
+    pub fn new(tcx: TyCtxt<'tcx>, global_lockmap: &'a GlobalLockMap) -> Self {
         Self {
             tcx,
-            _callgraph,
             global_lockmap,
             analyzed_functions: HashMap::new(),
         }
     }
-    
-    pub fn run(&mut self) -> ProgramLockSet {
 
-        // TODO: What should worklist be like? 
+    pub fn run(&mut self) -> ProgramLockSet {
+        // TODO: What should worklist be like?
         // - VecDeque<DefId, CallContext, VecDeque>
         // How to propagate change to both caller and callees?
         // - caller: we know the current caller; for each possible context of the caller, push it into the worklist as is
         // - callees: push influenced_callees into worklist
 
         let mut worklist: VecDeque<(DefId, CallContext, LockSet)> = VecDeque::new();
-        for local_def_id in self.tcx.hir().body_owners() {
-            let def_id = match self.tcx.hir().body_owner_kind(local_def_id) {
+        for local_def_id in self.tcx.hir_body_owners() {
+            let def_id = match self.tcx.hir_body_owner_kind(local_def_id) {
                 BodyOwnerKind::Fn => local_def_id.to_def_id(),
                 _ => continue,
             };
             // In the first iteration, we don't have call context info
             worklist.push_back((def_id, CallContext::Default, LockSet::new()));
-        };
+        }
 
         let mut iteration_limit = 10 * worklist.len();
         while iteration_limit > 0 && !worklist.is_empty() {
@@ -324,11 +339,12 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             };
 
             // Get the cached entry_set
-            let current_entry_lockset = if let Some(func_lock_set) = self.analyzed_functions.get_mut(&func_def_id) {
-                &mut func_lock_set.entry_lockset
-            } else {
-                &mut HashMap::new()
-            };
+            let current_entry_lockset =
+                if let Some(func_lock_set) = self.analyzed_functions.get_mut(&func_def_id) {
+                    &mut func_lock_set.entry_lockset
+                } else {
+                    &mut HashMap::new()
+                };
 
             // Then update it with current worklist item
             if let Some(old_lockset) = current_entry_lockset.get_mut(&call_context) {
@@ -346,7 +362,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
                 &self.analyzed_functions,
             );
             func_analyzer.run();
-            
+
             // Does caller need update?
             if func_analyzer.exit_changed() {
                 if let CallContext::Place(callsite) = &call_context {
@@ -358,9 +374,11 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
                     }
                 }
             }
-            
+
             // Does callees need update?
-            for (callee_id, (inner_context, new_entry_lockset)) in func_analyzer.influenced_callees() {
+            for (callee_id, (inner_context, new_entry_lockset)) in
+                func_analyzer.influenced_callees()
+            {
                 // Update the callee's entry_lockset
                 // let mut callee_old_entry = match self.analyzed_functions.get(&callee_id) {
                 //     Some(func_info) => {
@@ -380,7 +398,8 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             }
 
             // Save the result
-            self.analyzed_functions.insert(func_def_id, func_analyzer.result());
+            self.analyzed_functions
+                .insert(func_def_id, func_analyzer.result());
         }
 
         self.analyzed_functions.clone()
@@ -388,10 +407,18 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
 
     pub fn print_result(&self) {
         for func_info in self.analyzed_functions.values() {
-            if func_info.exit_lockset.iter().all(|(_ctxt, lockset)| lockset.is_all_bottom()) {
+            if func_info
+                .exit_lockset
+                .iter()
+                .all(|(_ctxt, lockset)| lockset.is_all_bottom())
+            {
                 continue;
             }
-            rap_info!("{} : {:?}", self.tcx.def_path_str(func_info.func_def_id), func_info.exit_lockset);
+            rap_info!(
+                "{} : {:?}",
+                self.tcx.def_path_str(func_info.func_def_id),
+                func_info.exit_lockset
+            );
             // rap_info!("{:?}", func_info);
         }
     }

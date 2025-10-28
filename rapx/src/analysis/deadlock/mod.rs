@@ -1,23 +1,23 @@
-pub mod types;
+pub mod deadlock_reporter;
 pub mod isr_analyzer;
+pub mod ldg_constructor;
 pub mod lock_collector;
 pub mod lockset_analyzer;
-pub mod ldg_constructor;
-pub mod deadlock_reporter;
+pub mod types;
 
-use rustc_middle::ty::TyCtxt;
-use crate::analysis::deadlock::ldg_constructor::LDGConstructor;
-use crate::rap_info;
-use crate::analysis::core::call_graph::CallGraph;
-use crate::analysis::deadlock::types::{interrupt::*, lock::*, LockDependencyGraph};
+use crate::analysis::core::callgraph::default::{CallGraphAnalyzer, CallGraphInfo};
+use crate::analysis::deadlock::deadlock_reporter::DeadlockReporter;
 use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
+use crate::analysis::deadlock::ldg_constructor::LDGConstructor;
 use crate::analysis::deadlock::lock_collector::LockCollector;
 use crate::analysis::deadlock::lockset_analyzer::LockSetAnalyzer;
-use crate::analysis::deadlock::deadlock_reporter::DeadlockReporter;
+use crate::analysis::deadlock::types::{interrupt::*, lock::*, LockDependencyGraph};
+use crate::rap_info;
+use rustc_middle::ty::TyCtxt;
 
 pub struct DeadlockDetector<'tcx, 'a> {
     pub tcx: TyCtxt<'tcx>,
-    pub callgraph: CallGraph<'tcx>,
+    pub callgraph: CallGraphInfo<'tcx>,
     pub target_lock_types: Vec<&'a str>,
     pub target_lockguard_types: Vec<&'a str>,
     pub target_isr_entries: Vec<&'a str>,
@@ -29,12 +29,14 @@ pub struct DeadlockDetector<'tcx, 'a> {
     lock_dependency_graph: LockDependencyGraph,
 }
 
-
-impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
+impl<'tcx, 'a> DeadlockDetector<'tcx, 'a>
+where
+    'tcx: 'a,
+{
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
-            callgraph: CallGraph::new(tcx),
+            callgraph: CallGraphInfo::new(),
             target_lock_types: vec![
                 "sync::spin::SpinLock",
                 // "sync::mutex::Mutex",
@@ -68,20 +70,21 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
 
     /// Start Interrupt-Aware Deadlock Detection
     /// Note: the detection is currently crate-local
-    pub fn run (&'a mut self) {
+    pub fn run(&'a mut self) {
         rap_info!("Executing Deadlock Detection");
 
         // Steps:
         // Dependencies
-        self.callgraph.set_quiet(true);
-        self.callgraph.start();
+        let mut callgraph_analyzer = CallGraphAnalyzer::new(self.tcx);
+        callgraph_analyzer.start();
+        self.callgraph = callgraph_analyzer.graph;
 
         // 1. Identify ISRs and Analysis InterruptSet
         let mut isr_analyzer = IsrAnalyzer::new(
-            self.tcx, 
+            self.tcx,
             &self.callgraph,
             &self.target_isr_entries,
-            &self.target_interrupt_apis
+            &self.target_interrupt_apis,
         );
         self.program_isr_info = isr_analyzer.run();
         // isr_analyzer.print_result();
@@ -96,29 +99,19 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
         // lock_collector.print_result();
 
         // 3. Analysis LockSet
-        let mut lockset_analyzer = LockSetAnalyzer::new(
-            self.tcx,
-            &self.callgraph,
-            &self.program_lock_info.lockmap,
-        );
+        let mut lockset_analyzer = LockSetAnalyzer::new(self.tcx, &self.program_lock_info.lockmap);
         self.program_lock_set = lockset_analyzer.run();
         // lockset_analyzer.print_result();
 
         // 4. Construct Lock Dependency Graph
-        let mut ldg_constructor = LDGConstructor::new(
-            self.tcx,
-            &self.program_lock_set,
-            &self.program_isr_info
-        );
+        let mut ldg_constructor =
+            LDGConstructor::new(self.tcx, &self.program_lock_set, &self.program_isr_info);
         ldg_constructor.run();
         ldg_constructor.print_result();
         self.lock_dependency_graph = ldg_constructor.into_graph();
 
         // 5. Detect cycles on LDG
-        let mut lock_reporter = DeadlockReporter::new(
-            self.tcx,
-            &self.lock_dependency_graph,
-        );
+        let mut lock_reporter = DeadlockReporter::new(self.tcx, &self.lock_dependency_graph);
         lock_reporter.run();
     }
 }

@@ -164,6 +164,71 @@ impl<'tcx> CallGraphInfo<'tcx> {
         }
     }
 
+    /// Get all callees of a caller function
+    pub fn get_callees_defid(&self, caller_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callees_path: Vec<DefId> = Vec::new();
+        if let Some(caller_id) = self.node_registry.get(caller_def_path) {
+            if let Some(callee_ids) = self.fn_calls.get(caller_id) {
+                for (id, _terminator) in callee_ids {
+                    if let Some(callee_node) = self.functions.get(id) {
+                        callees_path.push(callee_node.get_def_id());
+                    }
+                }
+            }
+            Some(callees_path)
+        } else {
+            None
+        }
+    }
+
+    /// Get all caller of a callee function
+    pub fn get_callers_defid(&self, callee_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callers_path: Vec<DefId> = Vec::new();
+        if let Some(callee_id) = self.node_registry.get(callee_def_path) {
+            for (potential_caller, potential_callees) in self.fn_calls.iter() {
+                if potential_callees
+                    .iter()
+                    .map(|(potential_callee_id, _terminator)| potential_callee_id)
+                    .any(|id| id == callee_id)
+                {
+                    if let Some(caller_node) = self.functions.get(potential_caller) {
+                        callers_path.push(caller_node.get_def_id());
+                    }
+                }
+            }
+            Some(callers_path)
+        } else {
+            None
+        }
+    }
+
+    /// Recursively get all callees of a caller
+    /// Return a vector of callees, by (partly) topological order, WITHOUT considering SCCs
+    pub fn get_callees_defid_recursive(&self, caller_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callees_path: Vec<DefId> = Vec::new();
+        if let Some(caller_id) = self.node_registry.get(caller_def_path) {
+            // traverse the call graph
+            let mut visited = HashSet::new();
+            let mut stack = vec![caller_id];
+            while let Some(current_id) = stack.pop() {
+                if let Some(callee_ids) = self.fn_calls.get(&current_id) {
+                    for (id, _terminator) in callee_ids {
+                        if !visited.contains(id) {
+                            visited.insert(id);
+                            if let Some(callee_node) = self.functions.get(id) {
+                                callees_path.push(callee_node.get_def_id());
+                                stack.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+            Some(callees_path)
+        } else {
+            None
+        }
+    }
+
     /// Add a node and return its id. If node already exists, only return its id.
     pub fn add_node(&mut self, def_id: DefId, def_path: &String) -> usize {
         if let Some(old_id) = self.node_registry.get(def_path) {

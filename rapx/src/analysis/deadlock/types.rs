@@ -1,14 +1,14 @@
-use std::fmt::{self, Formatter, Display};
 use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Display, Formatter};
 
 use petgraph::graph::DiGraph;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
 extern crate rustc_mir_dataflow;
-use rustc_mir_dataflow::fmt::DebugWithContext;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local, Location};
+use rustc_mir_dataflow::fmt::DebugWithContext;
 use rustc_span::Span;
 
 use crate::analysis::deadlock::types::lock::LockInstance;
@@ -21,10 +21,9 @@ pub mod lock {
     pub struct LockInstance {
         /// The def_id of the static item
         pub def_id: DefId,
-        
+
         /// Source span
         pub span: Span,
-
         // TODO: lock_type
     }
 
@@ -59,7 +58,7 @@ pub mod lock {
         MayHold,
     }
 
-    impl  LockState {
+    impl LockState {
         pub fn join(&mut self, other: &Self) -> bool {
             let old = self.clone();
             *self = match (&self, other) {
@@ -95,7 +94,7 @@ pub mod lock {
                 lock_sites: HashMap::new(),
             }
         }
-        
+
         /// Merge an `other` lockset into `self`.\
         /// Usage: next_bb_lockstate.merge(&current_bb_lockstate)
         pub fn merge(&mut self, other: &LockSet) -> bool {
@@ -114,7 +113,8 @@ pub mod lock {
                 if let Some(old_callsites) = self.lock_sites.get_mut(lock) {
                     old_callsites.extend(other_callsites);
                 } else {
-                    self.lock_sites.insert(lock.clone(), other_callsites.clone());
+                    self.lock_sites
+                        .insert(lock.clone(), other_callsites.clone());
                 }
             }
             old != *self
@@ -138,7 +138,9 @@ pub mod lock {
 
         /// Is this lockset trivial, i.e. all bottom
         pub fn is_all_bottom(&self) -> bool {
-            self.lock_states.iter().all(|(_, state)| *state == LockState::Bottom)
+            self.lock_states
+                .iter()
+                .all(|(_, state)| *state == LockState::Bottom)
         }
     }
 
@@ -158,7 +160,7 @@ pub mod lock {
                 }
                 if let Some(callsites) = self.lock_sites.get(lock) {
                     if callsites.is_empty() {
-                        continue
+                        continue;
                     }
                     if let Err(e) = write!(f, "Possible Locksites: {{") {
                         return Err(e);
@@ -205,9 +207,7 @@ pub mod lock {
 
     impl Display for FunctionLockSet {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "{:?}\n",
-                self.func_def_id,
-            )?;
+            write!(f, "{:?}\n", self.func_def_id,)?;
             // write!(f, "{:?}\n\tentry: {}\n\texit: {}\n",
             //     self.func_def_id,
             //     self.entry_lockset,
@@ -256,7 +256,7 @@ pub mod interrupt {
     pub enum IrqState {
         Bottom,
         MustBeDisabled, // Must
-        MayBeEnabled, // May
+        MayBeEnabled,   // May
     }
 
     impl IrqState {
@@ -291,7 +291,7 @@ pub mod interrupt {
 
         /// 函数出口处的中断开关状态
         pub exit_irq_state: IrqState,
-        
+
         /// 每个Basic Block开始位置的中断开关状态
         pub pre_bb_irq_states: HashMap<BasicBlock, IrqState>,
 
@@ -301,9 +301,9 @@ pub mod interrupt {
 
     impl PartialEq for FuncIrqInfo {
         fn eq(&self, other: &Self) -> bool {
-            self.def_id == other.def_id &&
-            self.exit_irq_state == other.exit_irq_state &&
-            self.interrupt_enable_sites == other.interrupt_enable_sites
+            self.def_id == other.def_id
+                && self.exit_irq_state == other.exit_irq_state
+                && self.interrupt_enable_sites == other.interrupt_enable_sites
         }
     }
 
@@ -324,14 +324,14 @@ pub mod interrupt {
     pub struct ProgramIsrInfo {
         /// The `DefId`s of all the identified ISR ENTRY functions.
         /// Corresponds to `DeadlockDetection.target_isr_entries`.
-        pub isr_entries: HashSet<DefId>, 
+        pub isr_entries: HashSet<DefId>,
 
         /// All possible callee (and recursively their callee)
         /// of a ISR ENTRY function should be considered as a ISR function.
-        pub isr_funcs: HashSet<DefId>, 
+        pub isr_funcs: HashSet<DefId>,
 
         /// The `FuncIrqInfo` of each function
-        pub func_irq_infos: HashMap<DefId, FuncIrqInfo>, 
+        pub func_irq_infos: HashMap<DefId, FuncIrqInfo>,
     }
 
     impl ProgramIsrInfo {
@@ -385,7 +385,7 @@ pub enum LockDependencyEdgeType {
 /// An edge LockSite A -> LockSite B denotes: \
 /// trying to acquire new lock `A.lock` at `A.site`, \
 /// while holding old lock `B.lock` which is acquired at `B.site`.\
-/// `edge_type` denotes how the control flow transferred from B to A, 
+/// `edge_type` denotes how the control flow transferred from B to A,
 /// whether by function `Call` or `Interrupt`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LockDependencyEdge {
@@ -396,11 +396,15 @@ pub struct LockDependencyEdge {
 
 impl Display for LockDependencyEdge {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Type: {:?}, Old: {:?} @ {:?}, New: {:?} @ {:?}",
-        self.edge_type,
-        self.new_lock_site.lock.def_id, self.new_lock_site.site.caller_def_id,
-        self.old_lock_site.lock.def_id, self.old_lock_site.site.caller_def_id,
-    )
+        write!(
+            f,
+            "Type: {:?}, Old: {:?} @ {:?}, New: {:?} @ {:?}",
+            self.edge_type,
+            self.new_lock_site.lock.def_id,
+            self.new_lock_site.site.caller_def_id,
+            self.old_lock_site.lock.def_id,
+            self.old_lock_site.site.caller_def_id,
+        )
     }
 }
 
@@ -418,7 +422,12 @@ impl LockDependencyGraph {
         }
     }
 
-    pub fn insert_normal_edge(&mut self, new_lock_site: &LockSite, old_lock_site: &LockSite, call_location: &CallSite) {
+    pub fn insert_normal_edge(
+        &mut self,
+        new_lock_site: &LockSite,
+        old_lock_site: &LockSite,
+        call_location: &CallSite,
+    ) {
         let new_node_idx = self.node_id_or_insert(&new_lock_site.lock);
         let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
         let edge_weight = LockDependencyEdge {
@@ -429,19 +438,28 @@ impl LockDependencyGraph {
         self.graph.add_edge(new_node_idx, old_node_idx, edge_weight);
     }
 
-    pub fn insert_interrupt_edge(&mut self, new_lock_site: &LockSite, old_lock_site: &LockSite, interrupt_location: &CallSite) {
+    pub fn insert_interrupt_edge(
+        &mut self,
+        new_lock_site: &LockSite,
+        old_lock_site: &LockSite,
+        interrupt_location: &CallSite,
+    ) {
         let new_node_idx = self.node_id_or_insert(&new_lock_site.lock);
         let old_node_idx = self.node_id_or_insert(&old_lock_site.lock);
-        if self.graph.edges_connecting(new_node_idx, old_node_idx).any(
-            |edge| {
+        if self
+            .graph
+            .edges_connecting(new_node_idx, old_node_idx)
+            .any(|edge| {
                 // If an edge with the same new and old lock_site exists, ignore this insert
-                if edge.weight().new_lock_site == *new_lock_site && edge.weight().old_lock_site == *old_lock_site {
-                    return true
+                if edge.weight().new_lock_site == *new_lock_site
+                    && edge.weight().old_lock_site == *old_lock_site
+                {
+                    return true;
                 } else {
-                    return false
+                    return false;
                 }
-            }
-        ) {
+            })
+        {
             // Skip if we already have an interrupt edge
             return;
         }
@@ -454,7 +472,8 @@ impl LockDependencyGraph {
     }
 
     pub fn node_id_or_insert(&mut self, lock: &LockInstance) -> NodeIndex {
-        if let Some(idx) = self.graph
+        if let Some(idx) = self
+            .graph
             .node_references()
             .find(|(_idx, node)| **node == *lock)
             .map(|(idx, _)| idx)

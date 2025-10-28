@@ -1,30 +1,18 @@
-use std::collections::{HashSet};
 use petgraph::graph::{EdgeIndex, NodeIndex};
-use petgraph::visit::{EdgeRef, IntoNodeReferences};
-use petgraph::algo::tarjan_scc;
-use rustc_hir::def_id::DefId;
-use rustc_hir::{BodyOwnerKind};
-use rustc_middle::mir::visit::Visitor;
-use rustc_middle::ty::{TyCtxt};
-use rustc_middle::mir::{Body, TerminatorKind};
+use rustc_middle::ty::TyCtxt;
+use std::collections::HashSet;
 
-use crate::analysis::deadlock::types::{*, lock::*, interrupt::*};
-use crate::{rap_info};
+use crate::analysis::deadlock::types::*;
+use crate::rap_info;
 
 pub struct DeadlockReporter<'tcx, 'a> {
-    tcx: TyCtxt<'tcx>,
+    _tcx: TyCtxt<'tcx>,
     graph: &'a LockDependencyGraph,
 }
 
-impl <'tcx, 'a> DeadlockReporter<'tcx, 'a> {
-    pub fn new(
-        tcx: TyCtxt<'tcx>,
-        graph: &'a LockDependencyGraph, 
-    ) -> Self {
-        Self {
-            tcx,
-            graph,
-        }
+impl<'tcx, 'a> DeadlockReporter<'tcx, 'a> {
+    pub fn new(_tcx: TyCtxt<'tcx>, graph: &'a LockDependencyGraph) -> Self {
+        Self { _tcx, graph }
     }
 
     pub fn run(&mut self) {
@@ -50,9 +38,7 @@ impl <'tcx, 'a> DeadlockReporter<'tcx, 'a> {
         }
     }
 
-    pub fn print_result(&self) {
-
-    }
+    pub fn print_result(&self) {}
 }
 
 fn self_cycle_node(graph: &LockDependencyGraph) -> HashSet<(NodeIndex, EdgeIndex)> {

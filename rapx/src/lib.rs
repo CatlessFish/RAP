@@ -28,7 +28,7 @@ extern crate rustc_trait_selection;
 extern crate rustc_traits;
 extern crate rustc_type_ir;
 extern crate thin_vec;
-use crate::analysis::scan::ScanAnalysis;
+use crate::analysis::{deadlock::DeadlockDetector, scan::ScanAnalysis};
 use analysis::{
     core::{
         alias_analysis::{default::AliasAnalyzer, AAResultMapWrapper, AliasAnalysis},
@@ -81,6 +81,7 @@ pub struct RapCallback {
     api_dependency: bool,
     callgraph: bool,
     dataflow: usize,
+    deadlock: bool,
     ownedheap: bool,
     range: usize,
     ssa: bool,
@@ -105,6 +106,7 @@ impl Default for RapCallback {
             api_dependency: false,
             callgraph: false,
             dataflow: 0,
+            deadlock: false,
             ownedheap: false,
             range: 0,
             ssa: false,
@@ -248,6 +250,16 @@ impl RapCallback {
     /// Test if dataflow analysis is enabled.
     pub fn is_dataflow_enabled(&self) -> usize {
         self.dataflow
+    }
+
+    /// Enable deadlock analysis.
+    pub fn enable_deadlock(&mut self) {
+        self.deadlock = true;
+    }
+
+    /// Test if deadlock analysis is enabled.
+    pub fn is_deadlock_enabled(&self) -> bool {
+        self.deadlock
     }
 
     /// Enable range analysis.
@@ -439,6 +451,13 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             rap_info!("{}", DataFlowGraphMapWrapper(result));
         }
         _ => {}
+    }
+
+    if callback.is_deadlock_enabled() {
+        let mut analyzer = DeadlockDetector::new(tcx);
+        analyzer.run();
+        // let result
+        // rap_info
     }
 
     if callback.is_ownedheap_enabled() {

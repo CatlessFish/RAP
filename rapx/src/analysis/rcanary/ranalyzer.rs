@@ -9,8 +9,8 @@ use rustc_middle::{
 };
 use rustc_span::def_id::DefId;
 
-use super::{IcxMut, IcxSliceMut, Rcx, RcxMut, rCanary};
-use crate::analysis::core::ownedheap_analysis::{OHAResultMap, OwnedHeap, default::TyWithIndex};
+use super::{rCanary, IcxMut, IcxSliceMut, Rcx, RcxMut};
+use crate::analysis::core::ownedheap_analysis::{default::TyWithIndex, OHAResultMap, OwnedHeap};
 use ownership::{IntraVar, Taint};
 
 use std::{

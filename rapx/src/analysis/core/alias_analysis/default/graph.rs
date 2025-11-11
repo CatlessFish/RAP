@@ -1,5 +1,5 @@
 use crate::{
-    analysis::core::alias_analysis::default::{MopAAResult, types::*},
+    analysis::core::alias_analysis::default::{types::*, MopAAResult},
     rap_debug,
     utils::source::*,
 };
@@ -11,7 +11,7 @@ use rustc_middle::{
     },
     ty::{TyCtxt, TypingEnv},
 };
-use rustc_span::{Span, def_id::DefId};
+use rustc_span::{def_id::DefId, Span};
 use std::{cell::RefCell, cmp::min, vec::Vec};
 
 #[derive(PartialEq, Debug, Copy, Clone)]

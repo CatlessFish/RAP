@@ -2,8 +2,8 @@ use super::dep_edge::DepEdge;
 use super::dep_node::DepNode;
 use crate::analysis::core::api_dependency::ApiDependencyGraph;
 use serde::{
-    Serialize,
     ser::{SerializeMap, SerializeSeq},
+    Serialize,
 };
 use std::path::Path;
 

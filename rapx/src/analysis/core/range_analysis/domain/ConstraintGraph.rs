@@ -21,7 +21,7 @@ use rustc_hir::{def, def_id::DefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::*,
-    ty::{self, ScalarInt, TyCtxt, print},
+    ty::{self, print, ScalarInt, TyCtxt},
 };
 use rustc_span::source_map::Spanned;
 use rustc_span::sym::var;

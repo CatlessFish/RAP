@@ -1,10 +1,9 @@
 use crate::{
     analysis::{
-        Analysis,
         core::{
             alias_analysis::AAResult,
             ownedheap_analysis::OHAResultMap,
-            range_analysis::{RangeAnalysis, default::RangeAnalyzer},
+            range_analysis::{default::RangeAnalyzer, RangeAnalysis},
         },
         safedrop::graph::SafeDropGraph,
         senryx::contracts::property::{CisRangeItem, PropertyContract},
@@ -15,6 +14,7 @@ use crate::{
             },
             show_mir::display_mir,
         },
+        Analysis,
     },
     rap_debug, rap_warn,
 };
@@ -46,7 +46,7 @@ use rustc_middle::{
     },
     ty::{self, GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
-use rustc_span::{Span, source_map::Spanned};
+use rustc_span::{source_map::Spanned, Span};
 
 //TODO: modify contracts vec to contract-bool pairs (we can also use path index to record path info)
 pub struct CheckResult {

@@ -2,19 +2,19 @@
 
 use crate::{
     analysis::{
-        Analysis,
         core::{
             alias_analysis::default::graph::MopGraph,
             callgraph::{default::CallGraphInfo, visitor::CallGraphVisitor},
             range_analysis::{
-                Range, RangeAnalysis,
                 domain::{
-                    ConstraintGraph::ConstraintGraph,
                     domain::{ConstConvert, IntervalArithmetic, VarNodes},
+                    ConstraintGraph::ConstraintGraph,
                 },
+                Range, RangeAnalysis,
             },
             ssa_transform::*,
         },
+        Analysis,
     },
     rap_debug, rap_info,
 };

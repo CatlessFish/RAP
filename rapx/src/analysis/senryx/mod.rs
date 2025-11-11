@@ -22,13 +22,13 @@ use visitor::{BodyVisitor, CheckResult};
 
 use crate::{
     analysis::{
-        Analysis,
-        core::alias_analysis::{AAResult, AliasAnalysis, default::AliasAnalyzer},
+        core::alias_analysis::{default::AliasAnalyzer, AAResult, AliasAnalysis},
         unsafety_isolation::{
-            UnsafetyIsolationCheck,
             hir_visitor::{ContainsUnsafe, RelatedFnCollector},
+            UnsafetyIsolationCheck,
         },
         utils::fn_info::*,
+        Analysis,
     },
     rap_info, rap_warn,
 };

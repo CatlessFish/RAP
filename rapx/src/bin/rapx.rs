@@ -3,10 +3,10 @@
 extern crate rustc_driver;
 extern crate rustc_session;
 
-use rapx::{RAP_DEFAULT_ARGS, RapCallback, rap_info, rap_trace, utils::log::init_log};
+use rapx::{rap_info, rap_trace, utils::log::init_log, RapCallback, RAP_DEFAULT_ARGS};
 use regex::Regex;
-use rustc_session::EarlyDiagCtxt;
 use rustc_session::config::ErrorOutputType;
+use rustc_session::EarlyDiagCtxt;
 use std::env;
 
 fn run_complier(args: &mut Vec<String>, callback: &mut RapCallback) {

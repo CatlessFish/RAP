@@ -6,7 +6,7 @@ mod statistic;
 #[allow(unused)]
 mod visitor;
 use crate::{
-    analysis::{Analysis, scan::visitor::FnVisitor},
+    analysis::{scan::visitor::FnVisitor, Analysis},
     rap_info,
 };
 use rustc_hir::def_id::LOCAL_CRATE;

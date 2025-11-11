@@ -1,6 +1,6 @@
 use cargo_metadata::{
-    Metadata,
     camino::{Utf8Path, Utf8PathBuf},
+    Metadata,
 };
 use rapx::utils::log::rap_error_and_exit;
 use std::collections::BTreeMap;

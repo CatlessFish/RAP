@@ -1,7 +1,7 @@
 use rustc_ast::{token::CommentKind, *};
 use rustc_span::{
-    DUMMY_SP,
     symbol::{Ident, Symbol},
+    DUMMY_SP,
 };
 use thin_vec::ThinVec;
 

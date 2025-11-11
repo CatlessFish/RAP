@@ -1,7 +1,9 @@
+cargo-features = ["edition2024"]
+
 [package]
 name = "rapx"
 version = "0.6.0"
-edition = "2024"
+edition = "2021"
 authors = ["Artisan-Lab <xuh@fudan.edu.cn>"]
 default-run = "rapx"
 license = "MPL-2.0"
@@ -26,6 +28,8 @@ snafu = "0.7.0"
 chrono = "0.4.19"
 serde_json = "1.0.72"
 z3 = "0.13.3"
+# this version of z3-sys use Rust 2018 edition
+z3-sys = "=0.9.4"
 log = "0.4.14"
 fern = { version = "0.6.2", features = ["colored"] }
 wait-timeout = "0.2.0"
@@ -44,11 +48,23 @@ intervals = "2.1"
 rand = "0.9.0"
 toml = "0.8.23"
 itertools = "0.14.0"
-safety-parser = "0.4.1"
+#safety-parser = "0.4.1"
+safety-parser = { path = "../patch/safety-parser" }
 syn = { version = "2", features = ["extra-traits", "full"] }
+
+# these version use Rust 1.66.0
+serde_spanned = "=1.0.1"
+toml_writer = "=1.0.2"
+toml_parser = "=1.0.2"
+cargo-platform = "=0.1.8"
+indexmap = "=2.11.4"
+toml_datetime = "=0.7.1"
 
 [features]
 backtraces = ["snafu/backtraces", "snafu/backtraces-impl-backtrace-crate"]
 
 [package.metadata.rust-analyzer]
 rustc_private = true
+
+#[patch.crates-io]
+#safety-parser = { git = 'https://github.com/os-checker/tag-std.git', branch = "safety-parser#edition2021" }

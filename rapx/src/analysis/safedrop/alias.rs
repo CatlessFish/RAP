@@ -1,6 +1,6 @@
 use super::graph::*;
 use crate::{
-    analysis::core::alias_analysis::default::{MopAAFact, MopAAResultMap, types::*},
+    analysis::core::alias_analysis::default::{types::*, MopAAFact, MopAAResultMap},
     rap_error,
 };
 use rustc_middle::{

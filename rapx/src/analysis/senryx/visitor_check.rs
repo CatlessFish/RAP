@@ -2,14 +2,14 @@ use std::collections::HashSet;
 
 use super::{
     contracts::{abstract_state::AlignState, state_lattice::Lattice},
-    matcher::{UnsafeApi, get_arg_place},
+    matcher::{get_arg_place, UnsafeApi},
     visitor::{BodyVisitor, CheckResult, PlaceTy},
 };
 use crate::{
     analysis::{
         core::{
             alias_analysis::AAResult,
-            dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
+            dataflow::{default::DataFlowAnalyzer, DataFlowAnalysis},
         },
         senryx::contracts::property::{CisRange, CisRangeItem, PropertyContract},
         utils::fn_info::{
@@ -25,8 +25,8 @@ use rustc_middle::mir::BinOp;
 use rustc_middle::mir::Operand;
 use rustc_middle::mir::Place;
 use rustc_middle::ty::Ty;
-use rustc_span::Span;
 use rustc_span::source_map::Spanned;
+use rustc_span::Span;
 
 impl<'tcx> BodyVisitor<'tcx> {
     pub fn handle_std_unsafe_call(

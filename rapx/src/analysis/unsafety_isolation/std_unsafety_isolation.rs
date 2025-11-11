@@ -1,6 +1,6 @@
 use super::{
-    UnsafetyIsolationCheck,
     generate_dot::{NodeType, UigUnit},
+    UnsafetyIsolationCheck,
 };
 use crate::analysis::utils::fn_info::*;
 use crate::analysis::utils::show_mir::display_mir;

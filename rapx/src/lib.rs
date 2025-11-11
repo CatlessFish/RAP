@@ -30,17 +30,16 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::analysis::scan::ScanAnalysis;
 use analysis::{
-    Analysis,
     core::{
-        alias_analysis::{AAResultMapWrapper, AliasAnalysis, default::AliasAnalyzer},
+        alias_analysis::{default::AliasAnalyzer, AAResultMapWrapper, AliasAnalysis},
         api_dependency::ApiDependencyAnalyzer,
-        callgraph::{CallGraphAnalysis, CallGraphDisplay, default::CallGraphAnalyzer},
+        callgraph::{default::CallGraphAnalyzer, CallGraphAnalysis, CallGraphDisplay},
         dataflow::{
-            Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper, default::DataFlowAnalyzer,
+            default::DataFlowAnalyzer, Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper,
         },
-        ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
+        ownedheap_analysis::{default::OwnedHeapAnalyzer, OHAResultMapWrapper, OwnedHeapAnalysis},
         range_analysis::{
-            PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
+            default::RangeAnalyzer, PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis,
         },
         ssa_transform::SSATrans,
     },
@@ -51,12 +50,13 @@ use analysis::{
     test::Test,
     unsafety_isolation::{UigInstruction, UnsafetyIsolationCheck},
     utils::show_mir::ShowMir,
+    Analysis,
 };
 use rustc_ast::ast;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::{
-    Config,
     interface::{self, Compiler},
+    Config,
 };
 use rustc_middle::{ty::TyCtxt, util::Providers};
 use rustc_session::search_paths::PathKind;

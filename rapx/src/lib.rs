@@ -523,9 +523,9 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
         ShowMir::new(tcx).start();
     }
 
-    if callback.is_ssa_transform_enabled() {
-        SSATrans::new(tcx, false).start();
-    }
+    // if callback.is_ssa_transform_enabled() {
+    //     SSATrans::new(tcx, false).start();
+    // }
 
     let x = callback.is_unsafety_isolation_enabled();
     match x {

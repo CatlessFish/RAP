@@ -12,7 +12,7 @@ use crate::rap_warn;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use rustc_hir::Attribute;
+use rustc_hir::AttributeMap;
 use rustc_hir::ImplItemKind;
 use rustc_middle::mir::BinOp;
 use rustc_middle::mir::Local;
@@ -23,8 +23,8 @@ use rustc_middle::{
     ty,
 };
 use rustc_span::def_id::LocalDefId;
-use rustc_span::kw;
 use rustc_span::sym;
+use rustc_span::symbol::kw;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -624,7 +624,7 @@ pub fn generate_contract_from_annotation(
 ) -> Vec<(usize, Vec<(usize, Ty)>, PropertyContract)> {
     const REGISTER_TOOL: &str = "rapx";
     let tool_attrs = tcx.get_all_attrs(def_id).into_iter().filter(|attr| {
-        if let Attribute::Unparsed(tool_attr) = attr {
+        if let AttributeMap::Unparsed(tool_attr) = attr {
             if tool_attr.path.segments[0].as_str() == REGISTER_TOOL {
                 return true;
             }

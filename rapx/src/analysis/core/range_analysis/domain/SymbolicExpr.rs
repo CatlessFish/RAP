@@ -11,7 +11,8 @@ use std::{
 use bounds::Bound;
 use intervals::*;
 use num_traits::{Bounded, Num, Zero};
-use rustc_ast::token::TokenKind::Plus;
+// use rustc_ast::token::TokenKind::Plus;
+use rustc_ast::token::Plus;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::*, ty::Ty};
 use std::ops::{Add, Mul, Sub};
@@ -55,7 +56,7 @@ pub enum SymbolicExpr<'tcx> {
         place_expr: Box<SymbolicExpr<'tcx>>,
     },
     AddressOf {
-        mutability: RawPtrKind,
+        mutability: Mutability,
         place_expr: Box<SymbolicExpr<'tcx>>,
     },
     Deref(Box<SymbolicExpr<'tcx>>),
@@ -140,11 +141,8 @@ impl<'tcx> fmt::Display for SymbolicExpr<'tcx> {
                 mutability,
                 place_expr,
             } => match mutability {
-                RawPtrKind::Const => write!(f, "&raw const {}", place_expr),
-                RawPtrKind::Mut => write!(f, "&raw mut {}", place_expr),
-                RawPtrKind::FakeForPtrMetadata => {
-                    write!(f, "&raw FakeForPtrMetadata {}", place_expr)
-                }
+                Mutability::Not => write!(f, "&raw const {}", place_expr),
+                Mutability::Mut => write!(f, "&raw mut {}", place_expr),
             },
             SymbolicExpr::Deref(expr) => write!(f, "*({})", expr),
             SymbolicExpr::Len(expr) => write!(f, "len({})", expr),

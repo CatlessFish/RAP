@@ -37,6 +37,7 @@ use analysis::{
         },
         ssa_transform::SSATrans,
     },
+    deadlock::DeadlockDetector,
     opt::Opt,
     rcanary::rCanary,
     safedrop::SafeDrop,
@@ -69,6 +70,7 @@ pub struct RapCallback {
     api_dependency: bool,
     callgraph: bool,
     dataflow: usize,
+    deadlock: bool,
     ownedheap: bool,
     range: usize,
     ssa: bool,
@@ -90,6 +92,7 @@ impl Default for RapCallback {
             api_dependency: false,
             callgraph: false,
             dataflow: 0,
+            deadlock: false,
             ownedheap: false,
             range: 0,
             ssa: false,
@@ -208,6 +211,16 @@ impl RapCallback {
     /// Test if dataflow analysis is enabled.
     pub fn is_dataflow_enabled(self) -> usize {
         self.dataflow
+    }
+
+    /// Enable deadlock analysis.
+    pub fn enable_deadlock(&mut self) {
+        self.deadlock = true;
+    }
+
+    /// Test if deadlock analysis is enabled.
+    pub fn is_deadlock_enabled(&self) -> bool {
+        self.deadlock
     }
 
     /// Enable range analysis.
@@ -373,6 +386,11 @@ pub fn start_analyzer(tcx: TyCtxt, callback: RapCallback) {
             rap_info!("{}", DataFlowGraphMapWrapper(result));
         }
         _ => {}
+    }
+
+    if callback.is_deadlock_enabled() {
+        let mut analyzer = DeadlockDetector::new(tcx);
+        analyzer.run();
     }
 
     if callback.is_ownedheap_enabled() {

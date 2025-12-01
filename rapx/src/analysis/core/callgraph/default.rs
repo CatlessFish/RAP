@@ -23,8 +23,7 @@ impl<'tcx> Analysis for CallGraphAnalyzer<'tcx> {
     }
 
     fn run(&mut self) {
-        let mut analysis = CallGraphAnalyzer::new(self.tcx);
-        analysis.start();
+        self.start();
     }
 
     fn reset(&mut self) {
@@ -73,33 +72,31 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
     }
 
     pub fn start(&mut self) {
-        for local_def_id in self.tcx.iter_local_def_id() {
-            if self.tcx.hir_maybe_body_owned_by(local_def_id).is_some() {
-                let def_id = local_def_id.to_def_id();
-                if self.tcx.is_mir_available(def_id) {
-                    let def_kind = self.tcx.def_kind(def_id);
+        for local_def_id in self.tcx.hir_body_owners() {
+            let def_id = local_def_id.to_def_id();
+            if self.tcx.is_mir_available(def_id) {
+                let def_kind = self.tcx.def_kind(def_id);
 
-                    let body: &Body<'_> = match def_kind {
-                        DefKind::Fn | DefKind::AssocFn => &self.tcx.optimized_mir(def_id),
-                        DefKind::Const
-                        | DefKind::Static { .. }
-                        | DefKind::AssocConst
-                        | DefKind::InlineConst
-                        | DefKind::AnonConst => {
-                            // NOTE: safer fallback for constants
-                            &self.tcx.mir_for_ctfe(def_id)
-                        }
-                        // These don't have MIR or shouldn't be visited
-                        _ => {
-                            rap_debug!("Skipping def_id {:?} with kind {:?}", def_id, def_kind);
-                            continue;
-                        }
-                    };
+                let body: &Body<'_> = match def_kind {
+                    DefKind::Fn | DefKind::AssocFn => &self.tcx.optimized_mir(def_id),
+                    DefKind::Const
+                    | DefKind::Static { .. }
+                    | DefKind::AssocConst
+                    | DefKind::InlineConst
+                    | DefKind::AnonConst => {
+                        // NOTE: safer fallback for constants
+                        &self.tcx.mir_for_ctfe(def_id)
+                    }
+                    // These don't have MIR or shouldn't be visited
+                    _ => {
+                        rap_debug!("Skipping def_id {:?} with kind {:?}", def_id, def_kind);
+                        continue;
+                    }
+                };
 
-                    let mut call_graph_visitor =
-                        CallGraphVisitor::new(self.tcx, def_id.into(), body, &mut self.graph);
-                    call_graph_visitor.visit();
-                }
+                let mut call_graph_visitor =
+                    CallGraphVisitor::new(self.tcx, def_id.into(), body, &mut self.graph);
+                call_graph_visitor.visit();
             }
         }
     }
@@ -134,8 +131,8 @@ impl Node {
 
 pub struct CallGraphInfo<'tcx> {
     pub functions: HashMap<usize, Node>, // id -> node
-    pub fn_calls: HashMap<usize, Vec<(usize, &'tcx mir::Terminator<'tcx>)>>, // caller_id -> Vec<(callee_id, terminator)>
-    pub node_registry: HashMap<String, usize>,                               // path -> id
+    pub fn_calls: HashMap<usize, Vec<(usize, Option<&'tcx mir::Terminator<'tcx>>)>>, // caller_id -> Vec<(callee_id, terminator)>
+    pub node_registry: HashMap<String, usize>,                                       // path -> id
 }
 
 impl<'tcx> CallGraphInfo<'tcx> {
@@ -167,12 +164,81 @@ impl<'tcx> CallGraphInfo<'tcx> {
         }
     }
 
-    pub fn add_node(&mut self, def_id: DefId, def_path: &String) {
-        if self.node_registry.get(def_path).is_none() {
-            let id = self.node_registry.len();
+    /// Get all callees of a caller function
+    pub fn get_callees_defid(&self, caller_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callees_path: Vec<DefId> = Vec::new();
+        if let Some(caller_id) = self.node_registry.get(caller_def_path) {
+            if let Some(callee_ids) = self.fn_calls.get(caller_id) {
+                for (id, _terminator) in callee_ids {
+                    if let Some(callee_node) = self.functions.get(id) {
+                        callees_path.push(callee_node.get_def_id());
+                    }
+                }
+            }
+            Some(callees_path)
+        } else {
+            None
+        }
+    }
+
+    /// Get all caller of a callee function
+    pub fn get_callers_defid(&self, callee_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callers_path: Vec<DefId> = Vec::new();
+        if let Some(callee_id) = self.node_registry.get(callee_def_path) {
+            for (potential_caller, potential_callees) in self.fn_calls.iter() {
+                if potential_callees
+                    .iter()
+                    .map(|(potential_callee_id, _terminator)| potential_callee_id)
+                    .any(|id| id == callee_id)
+                {
+                    if let Some(caller_node) = self.functions.get(potential_caller) {
+                        callers_path.push(caller_node.get_def_id());
+                    }
+                }
+            }
+            Some(callers_path)
+        } else {
+            None
+        }
+    }
+
+    /// Recursively get all callees of a caller
+    /// Return a vector of callees, by (partly) topological order, WITHOUT considering SCCs
+    pub fn get_callees_defid_recursive(&self, caller_def_path: &String) -> Option<Vec<DefId>> {
+        let mut callees_path: Vec<DefId> = Vec::new();
+        if let Some(caller_id) = self.node_registry.get(caller_def_path) {
+            // traverse the call graph
+            let mut visited = HashSet::new();
+            let mut stack = vec![caller_id];
+            while let Some(current_id) = stack.pop() {
+                if let Some(callee_ids) = self.fn_calls.get(&current_id) {
+                    for (id, _terminator) in callee_ids {
+                        if !visited.contains(id) {
+                            visited.insert(id);
+                            if let Some(callee_node) = self.functions.get(id) {
+                                callees_path.push(callee_node.get_def_id());
+                                stack.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+            Some(callees_path)
+        } else {
+            None
+        }
+    }
+
+    /// Add a node and return its id. If node already exists, only return its id.
+    pub fn add_node(&mut self, def_id: DefId, def_path: &String) -> usize {
+        if let Some(old_id) = self.node_registry.get(def_path) {
+            *old_id
+        } else {
+            let new_id = self.node_registry.len();
             let node = Node::new(def_id, def_path);
-            self.node_registry.insert(def_path.clone(), id);
-            self.functions.insert(id, node);
+            self.node_registry.insert(def_path.clone(), new_id);
+            self.functions.insert(new_id, node);
+            new_id
         }
     }
 
@@ -180,7 +246,7 @@ impl<'tcx> CallGraphInfo<'tcx> {
         &mut self,
         caller_id: usize,
         callee_id: usize,
-        terminator_stmt: &'tcx mir::Terminator<'tcx>,
+        terminator_stmt: Option<&'tcx mir::Terminator<'tcx>>,
     ) {
         let entry = self.fn_calls.entry(caller_id).or_insert_with(Vec::new);
         entry.push((callee_id, terminator_stmt));
@@ -189,8 +255,10 @@ impl<'tcx> CallGraphInfo<'tcx> {
     pub fn get_node_by_path(&self, def_path: &String) -> Option<usize> {
         self.node_registry.get(def_path).copied()
     }
-    pub fn get_callers_map(&self) -> HashMap<usize, Vec<(usize, &'tcx mir::Terminator<'tcx>)>> {
-        let mut callers_map: HashMap<usize, Vec<(usize, &'tcx mir::Terminator<'tcx>)>> =
+    pub fn get_callers_map(
+        &self,
+    ) -> HashMap<usize, Vec<(usize, Option<&'tcx mir::Terminator<'tcx>>)>> {
+        let mut callers_map: HashMap<usize, Vec<(usize, Option<&'tcx mir::Terminator<'tcx>>)>> =
             HashMap::new();
 
         for (&caller_id, calls_vec) in &self.fn_calls {
@@ -208,18 +276,28 @@ impl<'tcx> CallGraphInfo<'tcx> {
         rap_info!("CallGraph Analysis:");
         for (caller_id, callees) in &self.fn_calls {
             if let Some(caller_node) = self.functions.get(caller_id) {
-                for (callee_id, terminator_stmt) in callees {
+                for (callee_id, terminator) in callees {
                     if let Some(callee_node) = self.functions.get(callee_id) {
                         let caller_def_path = caller_node.get_def_path();
                         let callee_def_path = callee_node.get_def_path();
-                        rap_info!(
-                            "{}:{} -> {}:{} @ {:?}",
-                            caller_id,
-                            caller_def_path,
-                            *callee_id,
-                            callee_def_path,
-                            terminator_stmt.kind
-                        );
+                        if let Some(terminator_stmt) = terminator {
+                            rap_info!(
+                                "{}:{} -> {}:{} @ {:?}",
+                                caller_id,
+                                caller_def_path,
+                                *callee_id,
+                                callee_def_path,
+                                terminator_stmt.kind
+                            );
+                        } else {
+                            rap_info!(
+                                " (Virtual) {}:{} -> {}:{}",
+                                caller_id,
+                                caller_def_path,
+                                *callee_id,
+                                callee_def_path,
+                            );
+                        }
                     }
                 }
             }

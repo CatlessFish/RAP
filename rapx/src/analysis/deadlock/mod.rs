@@ -37,24 +37,18 @@ where
         Self {
             tcx,
             callgraph: CallGraphInfo::new(),
-            target_lock_types: vec![
-                "libs::spinlock::SpinLock",
-            ],
-            target_lockguard_types: vec![
-                "libs::spinlock::SpinLockGuard",
-            ],
-            target_isr_entries: vec![
-                "arch::x86::iommu::fault::iommu_page_fault_handler",
-                "arch::x86::kernel::tsc::determine_tsc_freq_via_pit::pit_callback",
-                "arch::x86::serial::handle_serial_input",
-                "arch::x86::timer::apic::init_periodic_mode::pit_callback",
-                "arch::x86::timer::timer_callback",
-                "smp::do_inter_processor_call",
-                "mm::tlb::do_remote_flush", // This is added manually
-            ],
+            target_lock_types: vec!["libs::spinlock::SpinLock"],
+            target_lockguard_types: vec!["libs::spinlock::SpinLockGuard"],
+            target_isr_entries: vec!["arch::x86_64::interrupt::handle::x86_64_do_irq"],
             target_interrupt_apis: vec![
-                ("arch::x86::irq::enable_local", InterruptApiType::Enable),
-                ("arch::x86::irq::disable_local", InterruptApiType::Disable),
+                (
+                    "<arch::x86_64::interrupt::X86_64InterruptArch as exception::InterruptArch>::interrupt_enable",
+                    InterruptApiType::Enable,
+                ),
+                (
+                    "<arch::x86_64::interrupt::X86_64InterruptArch as exception::InterruptArch>::interrupt_disable",
+                    InterruptApiType::Disable,
+                ),
             ],
 
             program_lock_info: ProgramLockInfo::new(),
@@ -83,7 +77,7 @@ where
             &self.target_interrupt_apis,
         );
         self.program_isr_info = isr_analyzer.run();
-        // isr_analyzer.print_result();
+        isr_analyzer.print_result();
 
         // 2. Collect Locks and LockGuards
         let mut lock_collector = LockCollector::new(
@@ -92,23 +86,23 @@ where
             &self.target_lockguard_types,
         );
         self.program_lock_info = lock_collector.collect();
-        // lock_collector.print_result();
+        lock_collector.print_result();
 
-        // 3. Analysis LockSet
-        let mut lockset_analyzer = LockSetAnalyzer::new(self.tcx, &self.program_lock_info.lockmap);
-        self.program_lock_set = lockset_analyzer.run();
-        // lockset_analyzer.print_result();
+        // // 3. Analysis LockSet
+        // let mut lockset_analyzer = LockSetAnalyzer::new(self.tcx, &self.program_lock_info.lockmap);
+        // self.program_lock_set = lockset_analyzer.run();
+        // // lockset_analyzer.print_result();
 
-        // 4. Construct Lock Dependency Graph
-        let mut ldg_constructor =
-            LDGConstructor::new(self.tcx, &self.program_lock_set, &self.program_isr_info);
-        ldg_constructor.run();
-        ldg_constructor.print_result();
-        self.lock_dependency_graph = ldg_constructor.into_graph();
+        // // 4. Construct Lock Dependency Graph
+        // let mut ldg_constructor =
+        //     LDGConstructor::new(self.tcx, &self.program_lock_set, &self.program_isr_info);
+        // ldg_constructor.run();
+        // ldg_constructor.print_result();
+        // self.lock_dependency_graph = ldg_constructor.into_graph();
 
-        // 5. Detect cycles on LDG
-        let mut lock_reporter = DeadlockReporter::new(self.tcx, &self.lock_dependency_graph);
-        lock_reporter.run();
+        // // 5. Detect cycles on LDG
+        // let mut lock_reporter = DeadlockReporter::new(self.tcx, &self.lock_dependency_graph);
+        // lock_reporter.run();
     }
 }
 

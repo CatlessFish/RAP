@@ -149,7 +149,12 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         // This step is inter-procedural
         self.analyze_interrupt_set();
 
-        rap_info!("Collected {} ISRs", self.program_isr_info.isr_funcs.len());
+        rap_info!(
+            "Collected {} ISRs. Found {} EnableIrqAPIs and {} DisableIrqAPIs.",
+            self.program_isr_info.isr_funcs.len(),
+            self.enable_interrupt_apis.len(),
+            self.disable_interrupt_apis.len()
+        );
         self.program_isr_info.clone()
     }
 
@@ -351,20 +356,20 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     pub fn print_result(&self) {
         rap_info!("==== ISR Analysis Results ====");
 
-        for isr_func in self.program_isr_info.isr_funcs.iter() {
-            rap_info!("May be ISR func: {} ", self.tcx.def_path_str(isr_func));
-        }
+        // for isr_func in self.program_isr_info.isr_funcs.iter() {
+        //     rap_info!("May be ISR func: {} ", self.tcx.def_path_str(isr_func));
+        // }
 
         let mut count = 0;
         for (def_id, func_info) in self.program_isr_info.func_irq_infos.iter() {
             if func_info.exit_irq_state == IrqState::Bottom {
                 continue;
             }
-            rap_info!(
-                "Func: {},\t IRQ {}",
-                self.tcx.def_path_str(def_id),
-                func_info
-            );
+            // rap_info!(
+            //     "Func: {},\t IRQ {}",
+            //     self.tcx.def_path_str(def_id),
+            //     func_info
+            // );
             count += 1;
         }
         rap_info!("==== ISR Analysis Results End ({} ISR entries, {} non-trivial interrupt set functions) ====", self.program_isr_info.isr_entries.len(), count);

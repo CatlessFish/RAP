@@ -412,9 +412,13 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
             let func_lockguard_instances = lockguard_collector.collect();
 
             // DEBUG
-            // if !func_lockguard_instances.is_empty() {
-            //     rap_info!("{} | {:?}", self.tcx.def_path_str(def_id), func_lockguard_instances);
-            // }
+            if !func_lockguard_instances.is_empty() {
+                rap_info!(
+                    "LockGuard Found :{} in {:?}",
+                    self.tcx.def_path_str(def_id),
+                    func_lockguard_instances
+                );
+            }
 
             self.lockguard_instances.extend(func_lockguard_instances);
         }

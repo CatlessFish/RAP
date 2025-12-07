@@ -49,6 +49,7 @@ fn main() {
             "-upg" => compiler.enable_unsafety_isolation(3),
             "-ucons" => compiler.enable_unsafety_isolation(4),
             "-mir" => compiler.enable_show_mir(),
+            "-deadlock" => compiler.enable_deadlock(),
             _ => args.push(arg),
         }
     }

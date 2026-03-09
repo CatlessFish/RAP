@@ -16,11 +16,9 @@ use crate::analysis::deadlock::tag_parser::{LockTagItem, TagParser};
 use crate::analysis::deadlock::types::{LockDependencyGraph, interrupt::*, lock::*};
 use rustc_middle::ty::TyCtxt;
 
-pub struct DeadlockDetector<'tcx, 'a> {
+pub struct DeadlockDetector<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub callgraph: CallGraph<'tcx>,
-    pub target_lock_types: Vec<&'a str>,
-    pub target_lockguard_types: Vec<&'a str>,
     // pub target_isr_entries: Vec<&'a str>,
     // pub target_interrupt_apis: Vec<(&'a str, InterruptApiType)>,
     parsed_tags: Vec<LockTagItem>,
@@ -30,24 +28,11 @@ pub struct DeadlockDetector<'tcx, 'a> {
     lock_dependency_graph: LockDependencyGraph,
 }
 
-impl<'tcx, 'a> DeadlockDetector<'tcx, 'a>
-where
-    'tcx: 'a,
-{
+impl<'tcx> DeadlockDetector<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
             callgraph: CallGraph::new(tcx),
-            target_lock_types: vec![
-                "sync::spin::SpinLock",
-                // "sync::mutex::Mutex",
-                // "sync::rwlock::RwLock",
-                // "sync::rwmutex::RwMutex",
-            ],
-            target_lockguard_types: vec![
-                "sync::spin::SpinLockGuard_",
-                // "sync::spin::MutexGuard_",
-            ],
             // target_isr_entries: vec![
             //     "arch::x86::iommu::fault::iommu_page_fault_handler",
             //     "arch::x86::kernel::tsc::determine_tsc_freq_via_pit::pit_callback",
@@ -71,7 +56,7 @@ where
 
     /// Start Interrupt-Aware Deadlock Detection
     /// Note: the detection is currently crate-local
-    pub fn run(&'a mut self) {
+    pub fn run(&mut self) {
         rap_info!("Executing Deadlock Detection");
 
         // Steps:
@@ -85,11 +70,7 @@ where
         self.parsed_tags = tag_parser.run();
 
         // 1. Collect Locks and LockGuards
-        let mut lock_collector = LockCollector::new(
-            self.tcx,
-            &self.target_lock_types,
-            &self.target_lockguard_types,
-        );
+        let mut lock_collector = LockCollector::new(self.tcx, &self.parsed_tags);
         self.program_lock_info = lock_collector.collect();
         lock_collector.print_result();
 

@@ -132,13 +132,13 @@ impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
 
     pub fn collect(&mut self) -> HashSet<AdtDef<'tcx>> {
         self.run();
-        for lock_type in &self.lock_types {
-            let did = lock_type.did();
-            let attrs = self.tcx.get_all_attrs(did);
-            for attr in attrs {
-                rap_info!("{:?} : {:?}", lock_type, attr);
-            }
-        }
+        // for lock_type in &self.lock_types {
+        //     let did = lock_type.did();
+        //     let attrs = self.tcx.get_all_attrs(did);
+        //     for attr in attrs {
+        //         rap_info!("{:?} : {:?}", lock_type, attr);
+        //     }
+        // }
         self.lock_types.clone()
     }
 }

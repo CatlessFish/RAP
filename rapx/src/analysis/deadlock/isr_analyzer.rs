@@ -7,6 +7,7 @@ extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::{Analysis, JoinSemiLattice};
 
 use crate::analysis::core::callgraph::default::CallGraph;
+use crate::analysis::deadlock::tag_parser::LockTagItem;
 use crate::analysis::deadlock::types::{interrupt::*, lock::*};
 
 impl JoinSemiLattice for IrqState {
@@ -154,8 +155,7 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
 pub struct IsrAnalyzer<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'a CallGraph<'tcx>,
-    target_isr_entries: &'a Vec<&'a str>,
-    target_interrupt_apis: &'a Vec<(&'a str, InterruptApiType)>,
+    parsed_tags: &'a Vec<LockTagItem>,
     program_lock_info: &'a ProgramLockInfo,
     enable_interrupt_apis: Vec<DefId>,
     disable_interrupt_apis: Vec<DefId>,
@@ -166,15 +166,13 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         callgraph: &'a CallGraph<'tcx>,
-        target_isr_entries: &'a Vec<&'a str>,
-        target_interrupt_apis: &'a Vec<(&'a str, InterruptApiType)>,
+        parsed_tags: &'a Vec<LockTagItem>,
         program_lock_info: &'a ProgramLockInfo,
     ) -> Self {
         Self {
             tcx,
             callgraph,
-            target_isr_entries,
-            target_interrupt_apis,
+            parsed_tags,
             program_lock_info,
             enable_interrupt_apis: vec![],
             disable_interrupt_apis: vec![],
@@ -200,30 +198,26 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
 
     /// Collect the `DefIds` of `target_isr_entries` and their (recursively) callees
     fn collect_isr(&mut self) {
-        let mut isr_def_ids: HashMap<String, DefId> = HashMap::new();
-        for local_def_id in self.tcx.hir_body_owners() {
-            let def_id = local_def_id.to_def_id();
-            let fn_name = self.tcx.def_path_str(def_id);
-            if self.target_isr_entries.contains(&fn_name.as_str()) {
-                isr_def_ids.insert(fn_name.clone(), def_id);
+        let mut isr_def_ids = HashSet::new();
+        self.parsed_tags.iter().for_each(|tag_item| {
+            if let LockTagItem::IsrEntry(did, _) = tag_item {
+                isr_def_ids.insert(did.clone());
             }
-        }
+        });
 
-        self.program_isr_info.isr_entries = isr_def_ids.values().cloned().collect();
+        self.program_isr_info.isr_entries = isr_def_ids.clone();
 
         // Start from self.target_isr_entries,
         // traverse self.call_graph.graph to find all possible callees
         // and mark them as ISRs
         let mut isr_funcs: HashSet<DefId> = HashSet::new();
-        for &isr_entry in self.target_isr_entries.iter() {
-            if let Some(isr_def_id) = isr_def_ids.get(isr_entry) {
-                // first, mark isr entries themselves as called by themselves
-                isr_funcs.insert(isr_def_id.clone());
+        for isr_entry_id in isr_def_ids.iter() {
+            // first, mark isr entries themselves as called by themselves
+            isr_funcs.insert(isr_entry_id.clone());
 
-                // then, find all possible callees
-                for callee in self.callgraph.get_callees_recursive(*isr_def_id) {
-                    isr_funcs.insert(callee);
-                }
+            // then, find all possible callees
+            for callee in self.callgraph.get_callees_recursive(*isr_entry_id) {
+                isr_funcs.insert(callee);
             }
         }
 
@@ -240,28 +234,15 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     /// Collect target_interrupt_apis's `DefId`
     /// into `self.enable_interrupt_apis` and `self.disable_interrupt_apis`
     fn collect_interrupt_apis(&mut self) {
-        // Iterate through all functions
-        for local_def_id in self.tcx.hir_body_owners() {
-            // filter const mir
-            // FIXME: explain this
-            if let Some(_other) = self.tcx.hir_body_const_context(local_def_id) {
-                continue;
-            }
-
-            let def_id = local_def_id.to_def_id();
-            if self.tcx.is_mir_available(def_id) {
-                let func_name = self.tcx.def_path_str(def_id);
-                for (api_name, api_type) in self.target_interrupt_apis.iter() {
-                    if func_name.contains(api_name) {
-                        if *api_type == InterruptApiType::Enable {
-                            self.enable_interrupt_apis.push(def_id);
-                        } else if *api_type == InterruptApiType::Disable {
-                            self.disable_interrupt_apis.push(def_id);
-                        }
-                    }
+        self.parsed_tags.iter().for_each(|tag_item| {
+            if let LockTagItem::IntrApi(did, is_enable, _is_nested, _) = tag_item {
+                if *is_enable {
+                    self.enable_interrupt_apis.push(did.clone());
+                } else {
+                    self.disable_interrupt_apis.push(did.clone());
                 }
             }
-        }
+        });
     }
 
     /// The outer iteration for inter-procedurely calculate `FuncIrqInfo` for each function

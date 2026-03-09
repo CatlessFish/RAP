@@ -3,6 +3,7 @@ pub mod isr_analyzer;
 pub mod ldg_constructor;
 pub mod lock_collector;
 pub mod lockset_analyzer;
+pub mod tag_parser;
 pub mod types;
 
 use crate::analysis::core::callgraph::default::{CallGraph, CallGraphAnalyzer};
@@ -11,6 +12,7 @@ use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
 use crate::analysis::deadlock::ldg_constructor::LDGConstructor;
 use crate::analysis::deadlock::lock_collector::LockCollector;
 use crate::analysis::deadlock::lockset_analyzer::LockSetAnalyzer;
+use crate::analysis::deadlock::tag_parser::{LockTagItem, TagParser};
 use crate::analysis::deadlock::types::{LockDependencyGraph, interrupt::*, lock::*};
 use rustc_middle::ty::TyCtxt;
 
@@ -19,9 +21,9 @@ pub struct DeadlockDetector<'tcx, 'a> {
     pub callgraph: CallGraph<'tcx>,
     pub target_lock_types: Vec<&'a str>,
     pub target_lockguard_types: Vec<&'a str>,
-    pub target_isr_entries: Vec<&'a str>,
-    pub target_interrupt_apis: Vec<(&'a str, InterruptApiType)>,
-
+    // pub target_isr_entries: Vec<&'a str>,
+    // pub target_interrupt_apis: Vec<(&'a str, InterruptApiType)>,
+    parsed_tags: Vec<LockTagItem>,
     program_lock_info: ProgramLockInfo,
     program_lock_set: ProgramLockSet,
     program_isr_info: ProgramIsrInfo,
@@ -46,20 +48,20 @@ where
                 "sync::spin::SpinLockGuard_",
                 // "sync::spin::MutexGuard_",
             ],
-            target_isr_entries: vec![
-                "arch::x86::iommu::fault::iommu_page_fault_handler",
-                "arch::x86::kernel::tsc::determine_tsc_freq_via_pit::pit_callback",
-                "arch::x86::serial::handle_serial_input",
-                "arch::x86::timer::apic::init_periodic_mode::pit_callback",
-                "arch::x86::timer::timer_callback",
-                "smp::do_inter_processor_call",
-                "mm::tlb::do_remote_flush", // This is added manually
-            ],
-            target_interrupt_apis: vec![
-                ("arch::x86::irq::enable_local", InterruptApiType::Enable),
-                ("arch::x86::irq::disable_local", InterruptApiType::Disable),
-            ],
-
+            // target_isr_entries: vec![
+            //     "arch::x86::iommu::fault::iommu_page_fault_handler",
+            //     "arch::x86::kernel::tsc::determine_tsc_freq_via_pit::pit_callback",
+            //     "arch::x86::serial::handle_serial_input",
+            //     "arch::x86::timer::apic::init_periodic_mode::pit_callback",
+            //     "arch::x86::timer::timer_callback",
+            //     "smp::do_inter_processor_call",
+            //     "mm::tlb::do_remote_flush", // This is added manually
+            // ],
+            // target_interrupt_apis: vec![
+            //     ("arch::x86::irq::enable_local", InterruptApiType::Enable),
+            //     ("arch::x86::irq::disable_local", InterruptApiType::Disable),
+            // ],
+            parsed_tags: vec![],
             program_lock_info: ProgramLockInfo::new(),
             program_lock_set: ProgramLockSet::new(),
             program_isr_info: ProgramIsrInfo::new(),
@@ -77,6 +79,10 @@ where
         let mut callgraph_analyzer = CallGraphAnalyzer::new(self.tcx);
         callgraph_analyzer.start();
         self.callgraph = callgraph_analyzer.graph;
+
+        // 0. Parse Tags
+        let tag_parser = TagParser::new(self.tcx);
+        self.parsed_tags = tag_parser.run();
 
         // 1. Collect Locks and LockGuards
         let mut lock_collector = LockCollector::new(
@@ -96,8 +102,7 @@ where
         let mut isr_analyzer = IsrAnalyzer::new(
             self.tcx,
             &self.callgraph,
-            &self.target_isr_entries,
-            &self.target_interrupt_apis,
+            &self.parsed_tags,
             &self.program_lock_info,
         );
         self.program_isr_info = isr_analyzer.run();

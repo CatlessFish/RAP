@@ -31,7 +31,9 @@ extern crate rustc_traits;
 extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::{
-    analysis::{core::alias_analysis::mfp::MfpAliasAnalyzer, scan::ScanAnalysis},
+    analysis::{
+        core::alias_analysis::mfp::MfpAliasAnalyzer, deadlock::DeadlockDetector, scan::ScanAnalysis,
+    },
     cli::{AliasStrategyKind, AnalysisKind, Commands, ExtractKind, OptLevel, RapxArgs},
 };
 use analysis::{
@@ -289,6 +291,9 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
             AnalysisKind::Ssa => {
                 SSATrans::new(tcx, false).start();
+            }
+            AnalysisKind::Deadlock => {
+                DeadlockDetector::new(tcx).run();
             }
         },
     }

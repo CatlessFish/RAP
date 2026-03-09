@@ -1,4 +1,5 @@
 pub mod core;
+pub mod deadlock;
 pub mod extract;
 pub mod graphs;
 pub mod opt;

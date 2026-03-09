@@ -116,6 +116,8 @@ pub enum AnalysisKind {
     Mir,
     /// print the MIR of the crate in dot format
     DotMir,
+    /// scan for potential deadlocks
+    Deadlock,
 }
 
 // use command string to automatically generate help messages

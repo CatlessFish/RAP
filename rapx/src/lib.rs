@@ -194,7 +194,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         }
 
-        &Commands::Extract { kind } => match kind {
+        Commands::Extract { kind } => match kind {
             ExtractKind::UnsafeApis => {
                 ExtractUnsafeApis::new(tcx).run_local();
             }
@@ -203,7 +203,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         },
 
-        &Commands::Analyze { kind } => match kind {
+        Commands::Analyze { kind } => match kind {
             AnalysisKind::Alias { strategy } => {
                 let alias = match strategy {
                     AliasStrategyKind::Mop => {
@@ -249,7 +249,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 );
             }
             AnalysisKind::Dataflow { debug } => {
-                if debug {
+                if *debug {
                     let mut analyzer = DataFlowAnalyzer::new(tcx, true);
                     analyzer.run();
                     let result = analyzer.get_all_dataflow();
@@ -274,7 +274,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 rap_info!("{}", PathConstraintMapWrapper(result));
             }
             AnalysisKind::Range { debug } => {
-                let mut analyzer = RangeAnalyzer::<i64>::new(tcx, debug);
+                let mut analyzer = RangeAnalyzer::<i64>::new(tcx, *debug);
                 analyzer.run();
                 let result = analyzer.get_all_fn_ranges();
                 rap_info!("{}", RAResultMapWrapper(result));
@@ -292,8 +292,12 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             AnalysisKind::Ssa => {
                 SSATrans::new(tcx, false).start();
             }
-            AnalysisKind::Deadlock => {
-                DeadlockDetector::new(tcx).run();
+            AnalysisKind::Deadlock {
+                save_tags,
+                load_tags,
+            } => {
+                DeadlockDetector::new(tcx)
+                    .run_with_tag_io(save_tags.as_deref(), load_tags.as_deref());
             }
         },
     }

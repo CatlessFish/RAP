@@ -1,5 +1,5 @@
+use rustc_hir::BodyOwnerKind;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{BodyOwnerKind};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{Body, Local, LocalDecl, Operand, Rvalue, TerminatorKind};
 use rustc_middle::ty::{AdtDef, Ty, TyCtxt, TyKind};
@@ -11,12 +11,12 @@ use crate::analysis::deadlock::types::lock::*;
 struct LockGuardInstanceCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     func_def_id: DefId,
-    parsed_tags: &'a Vec<LockTagItem>,
+    parsed_tags: &'a [LockTagItem],
     lockguard_instances: HashSet<(Local, LockGuardType)>,
 }
 
 impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
-    pub fn new(tcx: TyCtxt<'tcx>, func_def_id: DefId, parsed_tags: &'a Vec<LockTagItem>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, func_def_id: DefId, parsed_tags: &'a [LockTagItem]) -> Self {
         Self {
             tcx,
             func_def_id,
@@ -73,12 +73,12 @@ impl<'tcx, 'a> Visitor<'tcx> for LockGuardInstanceCollector<'tcx, 'a> {
 
 struct LockTypeCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    parsed_tags: &'a Vec<LockTagItem>,
+    parsed_tags: &'a [LockTagItem],
     lock_types: HashSet<AdtDef<'tcx>>,
 }
 
 impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
-    pub fn new(tcx: TyCtxt<'tcx>, parsed_tags: &'a Vec<LockTagItem>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, parsed_tags: &'a [LockTagItem]) -> Self {
         Self {
             tcx,
             parsed_tags,
@@ -90,7 +90,7 @@ impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
         // We suppose lock types are all structs, thus we use AdtDef to represent the lock type
         for tag in self.parsed_tags {
             if let LockTagItem::LockType(did, _name, _) = tag {
-                let adt_def = self.tcx.adt_def(did);
+                let adt_def = self.tcx.adt_def(*did);
                 self.lock_types.insert(adt_def);
             }
         }
@@ -353,7 +353,7 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
 
 pub struct LockCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    parsed_tags: &'a Vec<LockTagItem>,
+    parsed_tags: &'a [LockTagItem],
     lock_types: HashSet<AdtDef<'tcx>>,
     lock_instances: HashSet<LockInstance>,
     lockguard_instances: HashSet<LockGuardInstance>,
@@ -361,7 +361,7 @@ pub struct LockCollector<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> LockCollector<'tcx, 'a> {
-    pub fn new(tcx: TyCtxt<'tcx>, parsed_tags: &'a Vec<LockTagItem>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, parsed_tags: &'a [LockTagItem]) -> Self {
         Self {
             tcx,
             parsed_tags,

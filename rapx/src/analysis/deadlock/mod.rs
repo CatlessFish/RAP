@@ -56,7 +56,7 @@ impl<'tcx> DeadlockDetector<'tcx> {
 
     /// Start Interrupt-Aware Deadlock Detection
     /// Note: the detection is currently crate-local
-    pub fn run(&mut self) {
+    pub fn run_with_tag_io(&mut self, save_tags: Option<&str>, load_tags: Option<&str>) {
         rap_info!("Executing Deadlock Detection");
 
         // Steps:
@@ -67,7 +67,8 @@ impl<'tcx> DeadlockDetector<'tcx> {
 
         // 0. Parse Tags
         let tag_parser = TagParser::new(self.tcx);
-        self.parsed_tags = tag_parser.run();
+        let tags = tag_parser.load_analyze_save(load_tags, save_tags);
+        self.parsed_tags = tags;
 
         // 1. Collect Locks and LockGuards
         let mut lock_collector = LockCollector::new(self.tcx, &self.parsed_tags);

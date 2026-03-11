@@ -76,7 +76,7 @@ pub enum AliasStrategyKind {
 }
 
 // use command string to automatically generate help messages
-#[derive(Debug, Clone, Copy, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum AnalysisKind {
     /// perform alias analysis (meet-over-paths by default)
     Alias {
@@ -117,7 +117,14 @@ pub enum AnalysisKind {
     /// print the MIR of the crate in dot format
     DotMir,
     /// scan for potential deadlocks
-    Deadlock,
+    Deadlock {
+        /// (optional) Save analyzed tags to JSON file
+        #[arg(long)]
+        save_tags: Option<String>,
+        /// (optional) Load tags from JSON file
+        #[arg(long)]
+        load_tags: Option<String>,
+    },
 }
 
 // use command string to automatically generate help messages

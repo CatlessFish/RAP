@@ -1,34 +1,157 @@
 use rustc_ast::token::{Token, TokenKind};
 use rustc_ast::tokenstream::{TokenStream, TokenTree};
-use rustc_hir::{AttrArgs, Attribute, def_id::DefId};
-#[allow(unused)]
-use rustc_middle::mir::{Body, Location, Statement, Terminator, TerminatorEdges, TerminatorKind};
+use rustc_hir::{
+    AttrArgs, Attribute,
+    def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE},
+};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
+use serde::{Deserialize, Serialize};
 
 pub struct TagParser<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LockTagItem {
-    LockType(
-        DefId,
-        String, // Name
-        Span,
-    ),
-    LockGuardType(
-        DefId,
-        String, // Name
-        Span,
-    ),
+    LockType(DefId, String, SerializableSpan),
+    LockGuardType(DefId, String, SerializableSpan),
     IntrApi(
         DefId,
         bool, // true = Enable, false = Disable
         bool, // Nested
-        Span,
+        SerializableSpan,
     ),
-    IsrEntry(DefId, Span),
+    IsrEntry(DefId, SerializableSpan),
+}
+
+/// A stable-on-disk representation of a `DefId`.
+///
+/// `CrateNum` is only meaningful inside one rustc session, so the JSON cache
+/// stores a logical crate identity (`crate_name`, `crate_hash`) plus the
+/// per-crate `DefIndex`. During loading we resolve that logical identity back
+/// to the current session's `CrateNum`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub struct SerializableDefId {
+    pub crate_name: String,
+    pub crate_hash: String,
+    pub index: u32,
+}
+
+impl SerializableDefId {
+    pub fn from_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Self {
+        let crate_num = def_id.krate;
+        SerializableDefId {
+            crate_name: tcx.crate_name(crate_num).as_str().to_string(),
+            crate_hash: format!("{:?}", tcx.crate_hash(crate_num)),
+            index: def_id.index.as_u32(),
+        }
+    }
+
+    /// Resolve the persisted crate identity in the current rustc session.
+    fn resolve_crate_num(&self, tcx: TyCtxt<'_>) -> Option<CrateNum> {
+        if tcx.crate_name(LOCAL_CRATE).as_str() == self.crate_name
+            && format!("{:?}", tcx.crate_hash(LOCAL_CRATE)) == self.crate_hash
+        {
+            return Some(LOCAL_CRATE);
+        }
+
+        tcx.crates(()).iter().copied().find(|&crate_num| {
+            tcx.crate_name(crate_num).as_str() == self.crate_name
+                && format!("{:?}", tcx.crate_hash(crate_num)) == self.crate_hash
+        })
+    }
+
+    pub fn resolve(&self, tcx: TyCtxt<'_>) -> Option<DefId> {
+        self.resolve_crate_num(tcx).map(|crate_num| DefId {
+            krate: crate_num,
+            index: DefIndex::from_u32(self.index),
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SerializableSpan {
+    pub lo: u32,
+    pub hi: u32,
+}
+
+impl From<Span> for SerializableSpan {
+    fn from(span: Span) -> Self {
+        SerializableSpan {
+            lo: span.lo().0,
+            hi: span.hi().0,
+        }
+    }
+}
+
+// Deserialized spans cannot fully recover rustc hygiene context, but they are
+// still useful for diagnostics and coarse source mapping.
+impl Into<Span> for SerializableSpan {
+    fn into(self) -> Span {
+        use rustc_span::BytePos;
+        Span::with_root_ctxt(BytePos(self.lo), BytePos(self.hi))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+enum SerializableLockTagItem {
+    LockType(SerializableDefId, String, SerializableSpan),
+    LockGuardType(SerializableDefId, String, SerializableSpan),
+    IntrApi(SerializableDefId, bool, bool, SerializableSpan),
+    IsrEntry(SerializableDefId, SerializableSpan),
+}
+
+impl SerializableLockTagItem {
+    fn from_runtime(tcx: TyCtxt<'_>, item: &LockTagItem) -> Self {
+        match item {
+            LockTagItem::LockType(def_id, name, span) => Self::LockType(
+                SerializableDefId::from_def_id(tcx, *def_id),
+                name.clone(),
+                span.clone(),
+            ),
+            LockTagItem::LockGuardType(def_id, name, span) => Self::LockGuardType(
+                SerializableDefId::from_def_id(tcx, *def_id),
+                name.clone(),
+                span.clone(),
+            ),
+            LockTagItem::IntrApi(def_id, is_enable, is_nested, span) => Self::IntrApi(
+                SerializableDefId::from_def_id(tcx, *def_id),
+                *is_enable,
+                *is_nested,
+                span.clone(),
+            ),
+            LockTagItem::IsrEntry(def_id, span) => {
+                Self::IsrEntry(SerializableDefId::from_def_id(tcx, *def_id), span.clone())
+            }
+        }
+    }
+
+    fn resolve(&self, tcx: TyCtxt<'_>) -> Option<LockTagItem> {
+        match self {
+            Self::LockType(def_id, name, span) => def_id
+                .resolve(tcx)
+                .map(|did| LockTagItem::LockType(did, name.clone(), span.clone())),
+            Self::LockGuardType(def_id, name, span) => def_id
+                .resolve(tcx)
+                .map(|did| LockTagItem::LockGuardType(did, name.clone(), span.clone())),
+            Self::IntrApi(def_id, is_enable, is_nested, span) => def_id
+                .resolve(tcx)
+                .map(|did| LockTagItem::IntrApi(did, *is_enable, *is_nested, span.clone())),
+            Self::IsrEntry(def_id, span) => def_id
+                .resolve(tcx)
+                .map(|did| LockTagItem::IsrEntry(did, span.clone())),
+        }
+    }
+
+    fn def_id(&self) -> &SerializableDefId {
+        match self {
+            Self::LockType(def_id, ..)
+            | Self::LockGuardType(def_id, ..)
+            | Self::IntrApi(def_id, ..)
+            | Self::IsrEntry(def_id, ..) => def_id,
+        }
+    }
 }
 
 // Helper function: parse format "Name = \"SomeName\""
@@ -173,7 +296,7 @@ pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem>
                 AttrArgs::Delimited(delim) => delim.tokens.clone(),
                 AttrArgs::Empty => {
                     if path[1].as_str() == "IsrEntry" {
-                        return Some(LockTagItem::IsrEntry(did, attr.span));
+                        return Some(LockTagItem::IsrEntry(did, attr.span.into()));
                     } else {
                         return None;
                     }
@@ -185,7 +308,7 @@ pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem>
                     // Parse format Name = "SpinLock"
                     let name = parse_name_value(&tokens);
                     match name {
-                        Some(n) => Some(LockTagItem::LockType(did, n, attr.span)),
+                        Some(n) => Some(LockTagItem::LockType(did, n, attr.span.into())),
                         None => {
                             rap_warn!("Failed to parse LockType attribute for {:?}", did);
                             None
@@ -196,7 +319,7 @@ pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem>
                     // Parse format Name = "SpinLockGuard"
                     let name = parse_name_value(&tokens);
                     match name {
-                        Some(n) => Some(LockTagItem::LockGuardType(did, n, attr.span)),
+                        Some(n) => Some(LockTagItem::LockGuardType(did, n, attr.span.into())),
                         None => {
                             rap_warn!("Failed to parse LockGuardType attribute for {:?}", did);
                             None
@@ -207,7 +330,7 @@ pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem>
                     // Parse format Type = Enable/Disable, Nested = true/false
                     match parse_intr_api(&tokens) {
                         Some((typ, nested)) => {
-                            Some(LockTagItem::IntrApi(did, typ, nested, attr.span))
+                            Some(LockTagItem::IntrApi(did, typ, nested, attr.span.into()))
                         }
                         None => {
                             rap_warn!("Failed to parse IntrApi attribute for {:?}", did);
@@ -229,7 +352,86 @@ impl<'tcx> TagParser<'tcx> {
         Self { tcx }
     }
 
-    pub fn run(&self) -> Vec<LockTagItem> {
+    /// Load cached tags, resolve them for the current session, analyze the local
+    /// crate, and finally persist the merged cache back to disk.
+    pub fn load_analyze_save(
+        &self,
+        load_path: Option<&str>,
+        save_path: Option<&str>,
+    ) -> Vec<LockTagItem> {
+        let mut persisted_tags = if let Some(load_path) = load_path {
+            match std::fs::read_to_string(load_path) {
+                Ok(content) => match serde_json::from_str::<Vec<SerializableLockTagItem>>(&content)
+                {
+                    Ok(loaded) => {
+                        rap_info!("Loaded {} serialized tags from {}", loaded.len(), load_path);
+                        loaded
+                    }
+                    Err(e) => {
+                        rap_warn!("Failed to parse tags from {}: {}", load_path, e);
+                        vec![]
+                    }
+                },
+                Err(e) => {
+                    rap_warn!("Failed to read tag file {}: {}", load_path, e);
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+
+        let mut unresolved_cached_tags = 0;
+        let mut tags: Vec<LockTagItem> = persisted_tags
+            .iter()
+            .filter_map(|tag| match tag.resolve(self.tcx) {
+                Some(tag) => Some(tag),
+                None => {
+                    unresolved_cached_tags += 1;
+                    let def_id = tag.def_id();
+                    rap_warn!(
+                        "Skipping cached tag for crate {} ({}) because it is unavailable in the current session",
+                        def_id.crate_name,
+                        def_id.crate_hash
+                    );
+                    None
+                }
+            })
+            .collect();
+        if unresolved_cached_tags > 0 {
+            rap_warn!(
+                "Skipped {} cached tags that could not be resolved in this compilation session",
+                unresolved_cached_tags
+            );
+        }
+
+        let analyzed_tags = self.analyze_current_crate();
+        persisted_tags.extend(
+            analyzed_tags
+                .iter()
+                .map(|tag| SerializableLockTagItem::from_runtime(self.tcx, tag)),
+        );
+        tags.extend(analyzed_tags);
+
+        if let Some(save_path) = save_path {
+            match serde_json::to_string_pretty(&persisted_tags) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(save_path, json) {
+                        rap_warn!("Failed to save tags to {}: {}", save_path, e);
+                    } else {
+                        rap_info!("Saved tags to {}", save_path);
+                    }
+                }
+                Err(e) => {
+                    rap_warn!("Failed to serialize tags to JSON: {}", e);
+                }
+            }
+        }
+        tags
+    }
+
+    /// Scan current crate for tags, return tag items
+    fn analyze_current_crate(&self) -> Vec<LockTagItem> {
         let mut result = vec![];
         for id in self.tcx.hir_free_items() {
             let item = self.tcx.hir_item(id);

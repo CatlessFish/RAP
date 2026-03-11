@@ -155,7 +155,7 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
 pub struct IsrAnalyzer<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'a CallGraph<'tcx>,
-    parsed_tags: &'a Vec<LockTagItem>,
+    parsed_tags: &'a [LockTagItem],
     program_lock_info: &'a ProgramLockInfo,
     enable_interrupt_apis: Vec<DefId>,
     disable_interrupt_apis: Vec<DefId>,
@@ -166,7 +166,7 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         callgraph: &'a CallGraph<'tcx>,
-        parsed_tags: &'a Vec<LockTagItem>,
+        parsed_tags: &'a [LockTagItem],
         program_lock_info: &'a ProgramLockInfo,
     ) -> Self {
         Self {
@@ -198,10 +198,10 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
 
     /// Collect the `DefIds` of `target_isr_entries` and their (recursively) callees
     fn collect_isr(&mut self) {
-        let mut isr_def_ids = HashSet::new();
+        let mut isr_def_ids: HashSet<DefId> = HashSet::new();
         self.parsed_tags.iter().for_each(|tag_item| {
             if let LockTagItem::IsrEntry(did, _) = tag_item {
-                isr_def_ids.insert(did.clone());
+                isr_def_ids.insert(*did);
             }
         });
 
@@ -213,7 +213,7 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         let mut isr_funcs: HashSet<DefId> = HashSet::new();
         for isr_entry_id in isr_def_ids.iter() {
             // first, mark isr entries themselves as called by themselves
-            isr_funcs.insert(isr_entry_id.clone());
+            isr_funcs.insert(*isr_entry_id);
 
             // then, find all possible callees
             for callee in self.callgraph.get_callees_recursive(*isr_entry_id) {
@@ -237,9 +237,9 @@ impl<'tcx, 'a> IsrAnalyzer<'tcx, 'a> {
         self.parsed_tags.iter().for_each(|tag_item| {
             if let LockTagItem::IntrApi(did, is_enable, _is_nested, _) = tag_item {
                 if *is_enable {
-                    self.enable_interrupt_apis.push(did.clone());
+                    self.enable_interrupt_apis.push(*did);
                 } else {
-                    self.disable_interrupt_apis.push(did.clone());
+                    self.disable_interrupt_apis.push(*did);
                 }
             }
         });

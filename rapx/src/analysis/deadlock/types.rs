@@ -24,7 +24,7 @@ pub mod lock {
 
         /// Source span
         pub span: Span,
-        // TODO: lock_type
+        // TODO: static / local
     }
 
     impl Display for LockInstance {

@@ -238,11 +238,31 @@ impl<'tcx> TagParser<'tcx> {
             for attr in attrs {
                 let tag_item = extract_locktag_item(did, attr);
                 if let Some(item) = tag_item {
-                    rap_info!("{item:?}");
+                    // rap_info!("{item:?}");
                     result.push(item);
                 }
             }
         }
+
+        let mut lock_type_count = 0;
+        let mut lock_guard_type_count = 0;
+        let mut intr_api_count = 0;
+        let mut isr_entry_count = 0;
+        for item in &result {
+            match item {
+                LockTagItem::LockType(..) => lock_type_count += 1,
+                LockTagItem::LockGuardType(..) => lock_guard_type_count += 1,
+                LockTagItem::IntrApi(..) => intr_api_count += 1,
+                LockTagItem::IsrEntry(..) => isr_entry_count += 1,
+            }
+        }
+        rap_info!(
+            "Tags found: LockType = {}, LockGuardType = {}, IntrApi = {}, IsrEntry = {}",
+            lock_type_count,
+            lock_guard_type_count,
+            intr_api_count,
+            isr_entry_count
+        );
         result
     }
 }

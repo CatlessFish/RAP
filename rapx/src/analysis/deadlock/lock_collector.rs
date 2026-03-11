@@ -1,5 +1,5 @@
 use rustc_hir::def_id::DefId;
-use rustc_hir::{BodyOwnerKind, ItemKind};
+use rustc_hir::{BodyOwnerKind};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{Body, Local, LocalDecl, Operand, Rvalue, TerminatorKind};
 use rustc_middle::ty::{AdtDef, Ty, TyCtxt, TyKind};
@@ -26,8 +26,6 @@ impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
     }
 
     fn run(&mut self) {
-        // let fn_name = self.tcx.def_path_str(self.func_def_id);
-        // rap_info!("Function {}", fn_name);
         let body = self.tcx.optimized_mir(self.func_def_id);
         self.visit_body(body);
     }
@@ -89,23 +87,11 @@ impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
     }
 
     fn run(&mut self) {
-        // Collect all AdtDef that matches given name
         // We suppose lock types are all structs, thus we use AdtDef to represent the lock type
-
-        // iterate through struct def
-        for item_id in self.tcx.hir_free_items() {
-            let item = self.tcx.hir_item(item_id);
-            let def_id = match item.kind {
-                ItemKind::Struct(..) => item.owner_id.def_id.to_def_id(),
-                _ => continue,
-            };
-            let adt_def = self.tcx.adt_def(def_id);
-            for tag in self.parsed_tags.iter() {
-                if let LockTagItem::LockType(did, _name, _) = tag {
-                    if def_id == *did {
-                        self.lock_types.insert(adt_def);
-                    }
-                }
+        for tag in self.parsed_tags {
+            if let LockTagItem::LockType(did, _name, _) = tag {
+                let adt_def = self.tcx.adt_def(did);
+                self.lock_types.insert(adt_def);
             }
         }
     }
@@ -443,14 +429,20 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
     }
 
     pub fn print_result(&self) {
-        for ty in &self.lock_types {
-            rap_info!("Lock Type | {:?}", ty);
-        }
-        for lock in &self.lock_instances {
-            rap_info!("Lock Instance | {}", self.tcx.def_path_str(lock.def_id));
-        }
-        for guard in &self.lockguard_instances {
-            rap_info!("LockGuard Instance | {:?}", guard);
-        }
+        // for ty in &self.lock_types {
+        //     rap_info!("Lock Type | {:?}", ty);
+        // }
+        // for lock in &self.lock_instances {
+        //     rap_info!("Lock Instance | {}", self.tcx.def_path_str(lock.def_id));
+        // }
+        // for guard in &self.lockguard_instances {
+        //     rap_info!("LockGuard Instance | {:?}", guard);
+        // }
+        rap_info!(
+            "{} Lock Types, {} Lock Instances, {} LockGuard Instances",
+            self.lock_types.len(),
+            self.lock_instances.len(),
+            self.lockguard_instances.len(),
+        )
     }
 }

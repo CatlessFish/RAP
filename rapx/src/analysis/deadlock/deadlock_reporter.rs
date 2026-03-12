@@ -25,8 +25,8 @@ impl<'tcx, 'a> DeadlockReporter<'tcx, 'a> {
         rap_info!("Found {} self-cycle nodes", self_cycle_nodes.len());
         for (node, edge) in self_cycle_nodes {
             rap_info!(
-                "Possible Deadlock at: {:?}\n\tFirst acquired at {:?}\n\tthen aquired at {:?}\n\ttype {:?}",
-                self.graph.graph[node].def_id,
+                "Possible Deadlock at: {}\n\tFirst acquired at {:?}\n\tthen aquired at {:?}\n\ttype {:?}",
+                self.graph.graph[node],
                 self.graph.graph[edge].old_lock_site.site,
                 self.graph.graph[edge].new_lock_site.site,
                 self.graph.graph[edge].edge_type,

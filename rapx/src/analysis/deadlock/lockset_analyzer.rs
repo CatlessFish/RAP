@@ -104,26 +104,27 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                         .iter()
                         .find(|(local, _)| **local == destination.local)
                     {
-                        state.update_lock_state(lock.clone(), LockState::MayHold);
-                        state.add_callsite(
-                            lock.clone(),
-                            CallSite {
-                                location,
-                                caller_def_id: self.func_def_id,
-                            },
-                        );
-
-                        // Record lock operation
-                        self.func_lock_info
-                            .borrow_mut()
-                            .lock_operations
-                            .insert(LockSite {
-                                lock: lock.clone(),
-                                site: CallSite {
-                                    caller_def_id: self.func_def_id,
+                        for candidate_lock in lock.iter() {
+                            state.update_lock_state(candidate_lock.clone(), LockState::MayHold);
+                            state.add_callsite(
+                                candidate_lock.clone(),
+                                CallSite {
                                     location,
+                                    caller_def_id: self.func_def_id,
                                 },
-                            });
+                            );
+
+                            self.func_lock_info
+                                .borrow_mut()
+                                .lock_operations
+                                .insert(LockSite {
+                                    lock: candidate_lock.clone(),
+                                    site: CallSite {
+                                        caller_def_id: self.func_def_id,
+                                        location,
+                                    },
+                                });
+                        }
                     } else {
                         // Otherwise, it's some other function call
                         // 3. Merge the callee's exit_lockset
@@ -155,10 +156,12 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                     .iter()
                     .find(|(local, _)| **local == place.local)
                 {
-                    state.update_lock_state(lock.clone(), LockState::MustNotHold);
-                    // Clear the lock_sites since the lock is released here
-                    if let Some(callsites) = state.lock_sites.get_mut(lock) {
-                        callsites.clear();
+                    for candidate_lock in lock.iter() {
+                        state.update_lock_state(candidate_lock.clone(), LockState::MustNotHold);
+                        // Clear the lock_sites since the lock is released here
+                        if let Some(callsites) = state.lock_sites.get_mut(candidate_lock) {
+                            callsites.clear();
+                        }
                     }
                 }
             }

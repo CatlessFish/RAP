@@ -1,6 +1,6 @@
 use rustc_ast::token::{Token, TokenKind};
 use rustc_ast::tokenstream::{TokenStream, TokenTree};
-use rustc_hir::{AttrArgs, Attribute, def_id::DefId};
+use rustc_hir::{AttrArgs, Attribute, BodyOwnerKind, def::DefKind, def_id::DefId};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 use serde::{Deserialize, Serialize};
@@ -335,6 +335,18 @@ impl<'tcx> TagParser<'tcx> {
         Self { tcx }
     }
 
+    fn collect_tags_for_def_id<F>(&self, did: DefId, filter: F) -> Vec<LockTagItem>
+    where
+        F: Fn(&LockTagItem) -> bool,
+    {
+        self.tcx
+            .get_all_attrs(did)
+            .iter()
+            .filter_map(|attr| extract_locktag_item(did, attr))
+            .filter(filter)
+            .collect()
+    }
+
     /// Load cached tags, resolve them for the current session, analyze the local
     /// crate, and finally persist the merged cache back to disk.
     pub fn load_analyze_save(
@@ -424,17 +436,38 @@ impl<'tcx> TagParser<'tcx> {
     /// Scan current crate for tags, return tag items
     fn analyze_current_crate(&self) -> Vec<LockTagItem> {
         let mut result = vec![];
+
+        // Type tags live on item definitions, so keep the existing free-item scan
+        // for `LockType` and `LockGuardType`.
         for id in self.tcx.hir_free_items() {
             let item = self.tcx.hir_item(id);
             let did = item.owner_id.def_id.to_def_id();
-            let attrs = self.tcx.get_all_attrs(did);
-            for attr in attrs {
-                let tag_item = extract_locktag_item(did, attr);
-                if let Some(item) = tag_item {
-                    // rap_info!("{item:?}");
-                    result.push(item);
-                }
+            result.extend(self.collect_tags_for_def_id(did, |tag| {
+                matches!(
+                    tag,
+                    LockTagItem::LockType(..) | LockTagItem::LockGuardType(..)
+                )
+            }));
+        }
+
+        // Function-like tags should cover free functions and assoc methods. Scan
+        // body owners so methods are visible, but explicitly skip closures for now.
+        for local_def_id in self.tcx.hir_body_owners() {
+            if !matches!(
+                self.tcx.hir_body_owner_kind(local_def_id),
+                BodyOwnerKind::Fn
+            ) {
+                continue;
             }
+
+            let did = local_def_id.to_def_id();
+            if matches!(self.tcx.def_kind(did), DefKind::Closure) {
+                continue;
+            }
+
+            result.extend(self.collect_tags_for_def_id(did, |tag| {
+                matches!(tag, LockTagItem::IntrApi(..) | LockTagItem::IsrEntry(..))
+            }));
         }
 
         let mut lock_type_count = 0;

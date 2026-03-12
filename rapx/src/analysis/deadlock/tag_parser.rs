@@ -1,12 +1,12 @@
 use rustc_ast::token::{Token, TokenKind};
 use rustc_ast::tokenstream::{TokenStream, TokenTree};
-use rustc_hir::{
-    AttrArgs, Attribute,
-    def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE},
-};
+use rustc_hir::{AttrArgs, Attribute, def_id::DefId};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+use crate::analysis::utils::def_path::def_path_def_ids;
 
 pub struct TagParser<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -27,46 +27,29 @@ pub enum LockTagItem {
 
 /// A stable-on-disk representation of a `DefId`.
 ///
-/// `CrateNum` is only meaningful inside one rustc session, so the JSON cache
-/// stores a logical crate identity (`crate_name`, `crate_hash`) plus the
-/// per-crate `DefIndex`. During loading we resolve that logical identity back
-/// to the current session's `CrateNum`.
+/// `DefId` is only meaningful inside one rustc session, so the JSON cache
+/// stores a logical crate identity and the item's def path. During loading we
+/// resolve that path again in the current session instead of reusing unstable
+/// crate-local indices.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct SerializableDefId {
     pub crate_name: String,
-    pub crate_hash: String,
-    pub index: u32,
+    pub def_path: String,
 }
 
 impl SerializableDefId {
     pub fn from_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Self {
         let crate_num = def_id.krate;
+        let crate_name = tcx.crate_name(crate_num).as_str().to_string();
         SerializableDefId {
-            crate_name: tcx.crate_name(crate_num).as_str().to_string(),
-            crate_hash: format!("{:?}", tcx.crate_hash(crate_num)),
-            index: def_id.index.as_u32(),
+            def_path: format!("{}::{}", crate_name, tcx.def_path_str(def_id)),
+            crate_name,
         }
-    }
-
-    /// Resolve the persisted crate identity in the current rustc session.
-    fn resolve_crate_num(&self, tcx: TyCtxt<'_>) -> Option<CrateNum> {
-        if tcx.crate_name(LOCAL_CRATE).as_str() == self.crate_name
-            && format!("{:?}", tcx.crate_hash(LOCAL_CRATE)) == self.crate_hash
-        {
-            return Some(LOCAL_CRATE);
-        }
-
-        tcx.crates(()).iter().copied().find(|&crate_num| {
-            tcx.crate_name(crate_num).as_str() == self.crate_name
-                && format!("{:?}", tcx.crate_hash(crate_num)) == self.crate_hash
-        })
     }
 
     pub fn resolve(&self, tcx: TyCtxt<'_>) -> Option<DefId> {
-        self.resolve_crate_num(tcx).map(|crate_num| DefId {
-            krate: crate_num,
-            index: DefIndex::from_u32(self.index),
-        })
+        let path: Vec<&str> = self.def_path.split("::").collect();
+        def_path_def_ids(&tcx, &path).last()
     }
 }
 
@@ -382,6 +365,7 @@ impl<'tcx> TagParser<'tcx> {
         };
 
         let mut unresolved_cached_tags = 0;
+        let mut reported_unresolved_paths: HashSet<String> = HashSet::new();
         let mut tags: Vec<LockTagItem> = persisted_tags
             .iter()
             .filter_map(|tag| match tag.resolve(self.tcx) {
@@ -389,10 +373,17 @@ impl<'tcx> TagParser<'tcx> {
                 None => {
                     unresolved_cached_tags += 1;
                     let def_id = tag.def_id();
+                    if reported_unresolved_paths.insert(def_id.def_path.clone()) {
+                        rap_warn!(
+                            "Failed to resolve cached item {} from crate {} in current session",
+                            def_id.def_path,
+                            def_id.crate_name,
+                        );
+                    }
                     rap_warn!(
-                        "Skipping cached tag for crate {} ({}) because it is unavailable in the current session",
+                        "Skipping cached tag for item {} from crate {} because it is unavailable in the current session",
+                        def_id.def_path,
                         def_id.crate_name,
-                        def_id.crate_hash
                     );
                     None
                 }

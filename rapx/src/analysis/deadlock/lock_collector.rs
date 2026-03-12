@@ -286,7 +286,12 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                     guard.func_def_id == self.func_def_id && guard.local == destination.local
                 }) {
                     // 2. Record `self` param
-                    // We suppose `self` to be the LockInstance
+                    // We suppose the first argument to be the lock instance.
+                    // Some calls that return a lockguard-like type may not have
+                    // a receiver argument, so we must skip those safely.
+                    if args.is_empty() {
+                        return;
+                    }
                     let self_arg = args[0].node.clone();
                     match self_arg {
                         Operand::Copy(place) | Operand::Move(place) => {

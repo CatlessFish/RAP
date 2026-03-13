@@ -19,20 +19,28 @@ pub mod lock {
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub enum LockRoot {
+        /// A precise root recovered from a `static` item.
         Static { def_id: DefId, name: String },
+
+        /// A conservative root that merges all non-static values of the same type.
+        TypeBucket { type_name: String },
     }
 
     impl Display for LockRoot {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
             match self {
                 Self::Static { name, .. } => write!(f, "{name}"),
+                Self::TypeBucket { type_name } => write!(f, "{type_name}"),
             }
         }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct FieldPathElem {
+        /// Stable field index inside the current ADT.
         pub index: usize,
+
+        /// Human-readable field name for diagnostics.
         pub name: String,
     }
 

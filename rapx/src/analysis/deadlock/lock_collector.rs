@@ -12,11 +12,16 @@ use std::collections::{HashMap, HashSet};
 use crate::analysis::deadlock::tag_parser::LockTagItem;
 use crate::analysis::deadlock::types::lock::*;
 
+// Keep recursive field expansion bounded so nested container types do not
+// dominate the deadlock analysis runtime.
 const MAX_LOCK_FIELD_DEPTH: usize = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TrackedPlace {
+    // The abstract root object currently carried by a MIR local.
     root: LockRoot,
+
+    // The field-sensitive projection from the root to the current subobject.
     field_path: Vec<FieldPathElem>,
 }
 
@@ -31,6 +36,9 @@ impl TrackedPlace {
 }
 
 type LocalTrackedPlaceMap = HashMap<Local, HashSet<TrackedPlace>>;
+
+// Summaries only keep roots that can be reconstructed by the caller, so phase 1/2
+// stay lightweight without a full points-to analysis.
 type ReturnSummaryMap = HashMap<DefId, HashSet<TrackedPlace>>;
 
 struct LockGuardInstanceCollector<'tcx, 'a> {
@@ -173,6 +181,8 @@ impl<'tcx> LockInstanceCollector<'tcx> {
         field_depth: usize,
         path_stack: &mut HashSet<Ty<'tcx>>,
     ) {
+        // Use a path-local stack instead of a global visited set so sibling fields
+        // with the same type are still explored.
         if field_depth > MAX_LOCK_FIELD_DEPTH || !path_stack.insert(ty) {
             return;
         }
@@ -269,6 +279,9 @@ struct LockMapBuilder<'tcx> {
     body: &'tcx Body<'tcx>,
     local_tracked_places: LocalTrackedPlaceMap,
     lockmap: LocalLockMap,
+
+    // Tracks newly discovered non-static abstract instances for global reporting.
+    discovered_lock_instances: HashSet<LockInstance>,
 }
 
 impl<'tcx> LockMapBuilder<'tcx> {
@@ -289,6 +302,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
             body,
             local_tracked_places: HashMap::new(),
             lockmap: LocalLockMap::new(),
+            discovered_lock_instances: HashSet::new(),
         }
     }
 
@@ -352,6 +366,66 @@ impl<'tcx> LockMapBuilder<'tcx> {
         format!("field{field_idx}")
     }
 
+    fn type_bucket_name(&self, ty: Ty<'tcx>) -> String {
+        format!("{ty}")
+    }
+
+    fn collect_type_bucket_lock_instances_from_ty(
+        &self,
+        ty: Ty<'tcx>,
+        span: Span,
+        field_depth: usize,
+        path_stack: &mut HashSet<Ty<'tcx>>,
+        instances: &mut HashSet<LockInstance>,
+    ) {
+        // Type buckets are intentionally coarse: once we lose a precise static root,
+        // all values of the same lock-containing type collapse to one abstract root.
+        if field_depth > MAX_LOCK_FIELD_DEPTH || !path_stack.insert(ty) {
+            return;
+        }
+
+        if let Some(inner_ty) = self.wrapper_inner_ty(ty) {
+            self.collect_type_bucket_lock_instances_from_ty(
+                inner_ty,
+                span,
+                field_depth,
+                path_stack,
+                instances,
+            );
+            path_stack.remove(&ty);
+            return;
+        }
+
+        let TyKind::Adt(adt_def, args) = ty.kind() else {
+            path_stack.remove(&ty);
+            return;
+        };
+
+        if self.lock_types.contains(adt_def) {
+            instances.insert(LockInstance {
+                root: LockRoot::TypeBucket {
+                    type_name: self.type_bucket_name(ty),
+                },
+                field_path: Vec::new(),
+                span,
+            });
+            path_stack.remove(&ty);
+            return;
+        }
+
+        for field in adt_def.all_fields() {
+            self.collect_type_bucket_lock_instances_from_ty(
+                field.ty(self.tcx, args),
+                span,
+                field_depth + 1,
+                path_stack,
+                instances,
+            );
+        }
+
+        path_stack.remove(&ty);
+    }
+
     fn resolve_place(&self, place: &Place<'tcx>) -> HashSet<TrackedPlace> {
         let mut tracked = self
             .local_tracked_places
@@ -413,18 +487,37 @@ impl<'tcx> LockMapBuilder<'tcx> {
     }
 
     fn resolve_lock_instances_from_place(
-        &self,
+        &mut self,
         place: &Place<'tcx>,
         span: Span,
     ) -> HashSet<LockInstance> {
+        let place_ty = place.ty(self.body, self.tcx).ty;
         let mut path_stack = HashSet::new();
-        if !self.ty_may_reach_lock(place.ty(self.body, self.tcx).ty, 0, &mut path_stack) {
+        if !self.ty_may_reach_lock(place_ty, 0, &mut path_stack) {
             return HashSet::new();
         }
-        self.resolve_place(place)
+
+        // Prefer precise static-root recovery whenever the MIR value still carries it.
+        let static_instances: HashSet<_> = self
+            .resolve_place(place)
             .into_iter()
             .map(|tracked_place| tracked_place.to_lock_instance(span))
-            .collect()
+            .collect();
+        if !static_instances.is_empty() {
+            return static_instances;
+        }
+
+        let mut path_stack = HashSet::new();
+        let mut type_bucket_instances = HashSet::new();
+        // Fall back to the coarse type bucket only when no precise static root survives.
+        self.collect_type_bucket_lock_instances_from_ty(
+            place_ty,
+            span,
+            0,
+            &mut path_stack,
+            &mut type_bucket_instances,
+        );
+        type_bucket_instances
     }
 
     fn insert_local_roots(&mut self, local: Local, roots: HashSet<TrackedPlace>) {
@@ -441,6 +534,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
         if locks.is_empty() {
             return;
         }
+        self.discovered_lock_instances.extend(locks.clone());
         self.lockmap.entry(local).or_default().extend(locks);
     }
 
@@ -453,10 +547,11 @@ impl<'tcx> LockMapBuilder<'tcx> {
         });
     }
 
-    pub fn collect(&mut self) -> (LocalLockMap, HashSet<TrackedPlace>) {
+    pub fn collect(&mut self) -> (LocalLockMap, HashSet<LockInstance>, HashSet<TrackedPlace>) {
         self.run();
         (
             self.lockmap.clone(),
+            self.discovered_lock_instances.clone(),
             self.local_tracked_places
                 .get(&RETURN_PLACE)
                 .cloned()
@@ -574,13 +669,26 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
             self.lockguard_instances
                 .extend(lockguard_collector.collect());
         }
+        rap_debug!(
+            "Deadlock lock collector: identified {} lockguard locals",
+            self.lockguard_instances.len()
+        );
 
         let mut locktype_collector = LockTypeCollector::new(self.tcx, self.parsed_tags);
         self.lock_types = locktype_collector.collect();
+        rap_debug!(
+            "Deadlock lock collector: identified {} tagged lock types",
+            self.lock_types.len()
+        );
 
         let mut lock_instance_collector =
             LockInstanceCollector::new(self.tcx, self.lock_types.clone());
         self.lock_instances = lock_instance_collector.collect();
+        let initial_static_instances = self.lock_instances.len();
+        rap_debug!(
+            "Deadlock lock collector: collected {} static-root lock instances before lockmap propagation",
+            initial_static_instances
+        );
 
         let function_ids: Vec<_> = self
             .tcx
@@ -595,9 +703,14 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
 
         let mut return_summaries: ReturnSummaryMap = HashMap::new();
         let mut iteration_limit = 4 * function_ids.len().max(1);
+        let mut iteration_count = 0;
         while iteration_limit > 0 {
             iteration_limit -= 1;
+            iteration_count += 1;
             let mut changed = false;
+            let mut updated_lockmaps = 0;
+            let mut updated_summaries = 0;
+            let mut discovered_this_round = 0;
 
             for def_id in &function_ids {
                 let mut lockmap_builder = LockMapBuilder::new(
@@ -607,22 +720,77 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
                     self.lock_types.clone(),
                     return_summaries.clone(),
                 );
-                let (func_lockmap, return_summary) = lockmap_builder.collect();
+                let (func_lockmap, discovered_locks, return_summary) = lockmap_builder.collect();
 
                 if self.global_lockmap.get(def_id) != Some(&func_lockmap) {
                     self.global_lockmap.insert(*def_id, func_lockmap);
                     changed = true;
+                    updated_lockmaps += 1;
                 }
                 if return_summaries.get(def_id) != Some(&return_summary) {
                     return_summaries.insert(*def_id, return_summary);
                     changed = true;
+                    updated_summaries += 1;
+                }
+                let new_instance_count = discovered_locks
+                    .iter()
+                    .filter(|lock| !self.lock_instances.contains(lock))
+                    .count();
+                if new_instance_count > 0 {
+                    self.lock_instances.extend(discovered_locks);
+                    changed = true;
+                    discovered_this_round += new_instance_count;
                 }
             }
+
+            rap_debug!(
+                "Deadlock lock collector iteration {}: updated_lockmaps={}, updated_return_summaries={}, new_instances={}, total_instances={}",
+                iteration_count,
+                updated_lockmaps,
+                updated_summaries,
+                discovered_this_round,
+                self.lock_instances.len()
+            );
 
             if !changed {
                 break;
             }
         }
+
+        let static_root_instances = self
+            .lock_instances
+            .iter()
+            .filter(|lock| matches!(lock.root, LockRoot::Static { .. }))
+            .count();
+        let type_bucket_instances = self
+            .lock_instances
+            .iter()
+            .filter(|lock| matches!(lock.root, LockRoot::TypeBucket { .. }))
+            .count();
+        let mapped_guards = self
+            .global_lockmap
+            .values()
+            .map(|lockmap| lockmap.len())
+            .sum::<usize>();
+        let candidate_mappings = self
+            .global_lockmap
+            .values()
+            .flat_map(|lockmap| lockmap.values())
+            .map(|locks| locks.len())
+            .sum::<usize>();
+        let avg_candidates = if mapped_guards == 0 {
+            0.0
+        } else {
+            candidate_mappings as f64 / mapped_guards as f64
+        };
+        rap_debug!(
+            "Deadlock lock collector summary: iterations={}, static_instances={}, type_bucket_instances={}, mapped_guards={}, avg_candidates_per_guard={:.2}",
+            iteration_count,
+            static_root_instances,
+            type_bucket_instances,
+            mapped_guards,
+            avg_candidates
+        );
     }
 
     pub fn collect(&mut self) -> ProgramLockInfo {

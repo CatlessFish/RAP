@@ -386,7 +386,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             // Save the result
             self.analyzed_functions.insert(func_def_id, func_analyzer.result());
         }
-        rap_info!("Remaining iteration quota: {}", iteration_limit);
+        // rap_info!("Remaining iteration quota: {}", iteration_limit);
 
         self.analyzed_functions.clone()
     }
@@ -396,7 +396,7 @@ impl <'tcx, 'a> LockSetAnalyzer<'tcx, 'a> {
             if func_info.exit_lockset.iter().all(|(_ctxt, lockset)| lockset.is_all_bottom()) {
                 continue;
             }
-            rap_info!("{} : {:?}", self.tcx.def_path_str(func_info.func_def_id), func_info.exit_lockset);
+            // rap_info!("{} : {:?}", self.tcx.def_path_str(func_info.func_def_id), func_info.exit_lockset);
             // rap_info!("{:?}", func_info);
         }
     }

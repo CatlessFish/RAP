@@ -97,13 +97,13 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
                             InstanceKind::ReifyShim(def_id, _) => Some(def_id),
                             InstanceKind::FnPtrShim(def_id, _) => Some(def_id),
                             InstanceKind::Virtual(def_id, _) => {
-                                rap_info!("Calling virtual func {:?}", def_id);
+                                // rap_info!("Calling virtual func {:?}", def_id);
                                 if let Some(trait_def_id) = self.tcx.trait_of_item(def_id) {
-                                    rap_info!("\t of trait {:?}", trait_def_id);
+                                    // rap_info!("\t of trait {:?}", trait_def_id);
                                     for impl_def_id in self.tcx.all_impls(trait_def_id) {
                                         let impl_map = self.tcx.impl_item_implementor_ids(impl_def_id);
                                         if let Some(fn_def_id) = impl_map.get(&def_id) {
-                                            rap_info!("Find implementor: {:?}", fn_def_id);
+                                            // rap_info!("Find implementor: {:?}", fn_def_id);
                                         }
                                     }
 

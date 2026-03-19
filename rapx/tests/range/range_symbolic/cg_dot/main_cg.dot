@@ -1,0 +1,40 @@
+digraph ConstraintGraph {
+    layout=neato;
+    overlap=false;
+    splines=true;
+    sep="+1.0";
+    rankdir=TB;
+    ranksep=1.8;
+    nodesep=0.8;
+    edge [len=2.0];
+    node [fontname="Fira Code"];
+
+    // Variable Nodes
+    subgraph cluster_vars {
+        rank=same;
+        "_0" [label="_0", shape=ellipse, style=filled, fillcolor=lightblue, width=1.2, fixedsize=false];
+        "_2" [label="_2", shape=ellipse, style=filled, fillcolor=lightblue, width=1.2, fixedsize=false];
+        "_1" [label="_1", shape=ellipse, style=filled, fillcolor=lightblue, width=1.2, fixedsize=false];
+        "_3" [label="_3", shape=ellipse, style=filled, fillcolor=lightblue, width=1.2, fixedsize=false];
+    }
+
+    // Operation Nodes
+    subgraph cluster_ops {
+        rank=same;
+        "op_0" [label="Use", shape=box, style=filled, fillcolor=lightgrey, width=1.5, fixedsize=false];
+        "op_1" [label="Use", shape=box, style=filled, fillcolor=lightgrey, width=1.5, fixedsize=false];
+        "op_2" [label="Call(DefId(0:3 ~ range_symbolic[0e3d]::foo1))", shape=box, style=filled, fillcolor=lightgrey, width=1.5, fixedsize=false];
+        "op_3" [label="Use", shape=box, style=filled, fillcolor=lightgrey, width=1.5, fixedsize=false];
+    }
+
+    // Definition Edges (op -> var)
+    "op_0" -> "_1";
+    "op_2" -> "_3";
+    "op_1" -> "_2";
+    "op_3" -> "_0";
+
+    // Use Edges (var -> op)
+    "_1" -> "op_1";
+
+    // Symbolic Bound Edges (var -> op)
+}

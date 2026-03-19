@@ -37,13 +37,13 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
             callgraph: CallGraph::new(tcx),
             target_lock_types: vec![
                 "sync::spin::SpinLock",
-                // "sync::mutex::Mutex",
-                // "sync::rwlock::RwLock",
-                // "sync::rwmutex::RwMutex",
+                "sync::mutex::Mutex",
+                "sync::rwlock::RwLock",
+                "sync::rwmutex::RwMutex",
             ],
             target_lockguard_types: vec![
                 "sync::spin::SpinLockGuard_",
-                // "sync::spin::MutexGuard_",
+                "sync::spin::MutexGuard_",
             ],
             target_isr_entries: vec![
                 "arch::x86::iommu::fault::iommu_page_fault_handler",
@@ -96,7 +96,7 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
             &self.target_lockguard_types,
         );
         self.program_lock_info = lock_collector.collect();
-        // lock_collector.print_result();
+        lock_collector.print_result();
 
         // 3. Analysis LockSet
         let mut lockset_analyzer = LockSetAnalyzer::new(
@@ -114,7 +114,7 @@ impl<'tcx, 'a> DeadlockDetector<'tcx, 'a> where 'tcx: 'a {
             &self.program_isr_info
         );
         ldg_constructor.run();
-        ldg_constructor.print_result();
+        // ldg_constructor.print_result();
         self.lock_dependency_graph = ldg_constructor.into_graph();
 
         // 5. Detect cycles on LDG

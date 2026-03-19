@@ -234,25 +234,25 @@ impl<'tcx, 'a> LDGConstructor<'tcx, 'a> {
         let mut result = String::new();
         result.push_str("\n");
         for (idx, lock) in self.graph.graph.node_references() {
-            result.push_str(format!("{} {}\n", idx.index(), lock).as_str());
+            // result.push_str(format!("{} {}\n", idx.index(), lock).as_str());
         }
         // Calculate edge num
         let mut call_edge_num = 0;
         let mut intr_edge_num = 0;
         for edge in self.graph.graph.edge_references() {
-            result.push_str(format!("{} -> {} | {}\n", edge.source().index(), edge.target().index(), edge.weight()).as_str());
+            // result.push_str(format!("{} -> {} | {}\n", edge.source().index(), edge.target().index(), edge.weight()).as_str());
             if let LockDependencyEdgeType::Call(_) = edge.weight().edge_type {
                 call_edge_num += 1;
             } else {
                 intr_edge_num += 1;
             }
         }
-        result.push_str(format!("{} call edges, {} intr edges\n", call_edge_num, intr_edge_num).as_str());
-        rap_info!("{}", result);
+        // result.push_str(format!("{} call edges, {} intr edges\n", call_edge_num, intr_edge_num).as_str());
+        // rap_info!("{}", result);
     }
 
     pub fn print_dot_graph(&self) {
-        rap_info!("\n{:?}", Dot::with_config(&self.graph.graph, &[Config::GraphContentOnly]));
+        // rap_info!("\n{:?}", Dot::with_config(&self.graph.graph, &[Config::GraphContentOnly]));
     }
 
     pub fn into_graph(self) -> LockDependencyGraph {

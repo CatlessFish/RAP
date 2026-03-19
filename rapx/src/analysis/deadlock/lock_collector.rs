@@ -463,15 +463,16 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
 
     pub fn print_result(&self) {
         for ty in &self.lock_types {
-            rap_info!("Lock Type | {:?}", ty);
+            // rap_info!("Lock Type | {:?}", ty);
         }
         for lock in &self.lock_instances {
-            rap_info!("Lock Instance | {}", self.tcx.def_path_str(lock.def_id));
+            // rap_info!("Lock Instance | {}", self.tcx.def_path_str(lock.def_id));
         }
         for (def_id, func_lockmap) in self.global_lockmap.iter() {
             for (local, lock) in func_lockmap.iter() {
-                rap_info!("LockGuard | {} # {:?} -> {}", self.tcx.def_path_str(def_id), local, self.tcx.def_path_str(lock.def_id));
+                // rap_info!("LockGuard | {} # {:?} -> {}", self.tcx.def_path_str(def_id), local, self.tcx.def_path_str(lock.def_id));
             }
         }
+        rap_info!("Collected {} Lock Types, {} Lock Instances and {} LockGuard Instances", &self.lock_types.len(), &self.lock_instances.len(), &self.lockguard_instances.len());
     }
 }

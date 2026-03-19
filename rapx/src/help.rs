@@ -36,6 +36,11 @@ will perform two kinds of detection in a row.
                       
                      NOTE: for shallow or deep, rapx will enter each member
                      folder to do the check.
+
+    RAP_ASTERINAS_GUARD_IRQ_PATCH
+                     enable the asterinas-specific guard IRQ semantics patch
+                     for deadlock analysis: true, false
+                     * false is the default value
 "#
 );
 

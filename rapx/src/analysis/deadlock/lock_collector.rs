@@ -9,6 +9,9 @@ use rustc_middle::ty::{AdtDef, GenericArgsRef, Ty, TyCtxt, TyKind};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
 
+use crate::analysis::deadlock::asterinas_patch::{
+    infer_asterinas_guard_irq_semantics_for_call, infer_asterinas_lockguard_type,
+};
 use crate::analysis::deadlock::tag_parser::LockTagItem;
 use crate::analysis::deadlock::types::lock::*;
 
@@ -79,7 +82,8 @@ impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
             for tag in self.parsed_tags.iter() {
                 if let LockTagItem::LockGuardType(def_id, _name, _) = tag {
                     if adt_def.did() == *def_id {
-                        return Some(LockGuardType::Default);
+                        return infer_asterinas_lockguard_type(self.tcx, local_type)
+                            .or(Some(LockGuardType::Default));
                     }
                 }
             }
@@ -562,6 +566,21 @@ impl<'tcx> LockMapBuilder<'tcx> {
             }));
     }
 
+    fn infer_guard_irq_semantics(
+        &self,
+        receiver_place: &Place<'tcx>,
+        destination_local: Local,
+        fallback: GuardIrqSemantics,
+    ) -> GuardIrqSemantics {
+        infer_asterinas_guard_irq_semantics_for_call(
+            self.tcx,
+            self.body,
+            receiver_place,
+            destination_local,
+        )
+        .unwrap_or(fallback)
+    }
+
     fn run(&mut self) {
         self.visit_body(self.body);
         self.lockmap.retain(|&local, _| {
@@ -615,15 +634,17 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                 if let Some(lock_op) = self.lock_ops.get(&callee).cloned() {
                     if let Some(lock_arg) = args.get(lock_op.lock_arg) {
                         if let Operand::Copy(place) | Operand::Move(place) = &lock_arg.node {
+                            let fallback_irq_semantics = lock_op.irq_semantics.clone();
+                            let irq_semantics = self.infer_guard_irq_semantics(
+                                place,
+                                destination.local,
+                                fallback_irq_semantics.clone(),
+                            );
                             let locks = self.resolve_lock_instances_from_place(
                                 place,
                                 terminator.source_info.span,
                             );
-                            self.record_guard_locks(
-                                destination.local,
-                                locks,
-                                lock_op.irq_semantics,
-                            );
+                            self.record_guard_locks(destination.local, locks, irq_semantics);
                         }
                     } else {
                         rap_warn!(
@@ -636,15 +657,16 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                     self.missing_lock_op_apis.insert(callee);
                     match &receiver.node {
                         Operand::Copy(place) | Operand::Move(place) => {
+                            let irq_semantics = self.infer_guard_irq_semantics(
+                                place,
+                                destination.local,
+                                GuardIrqSemantics::Unchanged,
+                            );
                             let locks = self.resolve_lock_instances_from_place(
                                 place,
                                 terminator.source_info.span,
                             );
-                            self.record_guard_locks(
-                                destination.local,
-                                locks,
-                                GuardIrqSemantics::Unchanged,
-                            );
+                            self.record_guard_locks(destination.local, locks, irq_semantics);
                         }
                         Operand::Constant(..) => {}
                     }

@@ -208,7 +208,7 @@ impl<'tcx, 'a> Visitor<'tcx> for InterruptEdgeCollector<'tcx, 'a> {
             }
             None => return,
         };
-        if *irq_state == IrqState::MustBeDisabled {
+        if *irq_state != IrqState::MayBeEnabled {
             return;
         }
 

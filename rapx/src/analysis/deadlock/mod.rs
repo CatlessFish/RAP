@@ -1,3 +1,4 @@
+pub mod asterinas_patch;
 pub mod deadlock_reporter;
 pub mod isr_analyzer;
 pub mod ldg_constructor;

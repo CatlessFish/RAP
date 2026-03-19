@@ -134,6 +134,16 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncIsrAnalyzer<'tcx, 'a> {
                         return terminator.edges();
                     }
 
+                    if let Some(infos) = self.lockmap.get(&destination.local) {
+                        if infos
+                            .iter()
+                            .any(|info| info.irq_semantics == GuardIrqSemantics::DisabledWhileHeld)
+                        {
+                            state.active_irq_disabled_guards.insert(destination.local);
+                        }
+                        return terminator.edges();
+                    }
+
                     if let Some(guard_irq_disabled) = self.lock_ops.get(&callee_def_id.0) {
                         if *guard_irq_disabled {
                             state.active_irq_disabled_guards.insert(destination.local);

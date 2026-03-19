@@ -232,7 +232,7 @@ impl<'tcx, 'a> LDGConstructor<'tcx, 'a> {
 
     pub fn print_result(&self) {
         let mut result = String::new();
-        result.push_str("\n");
+        // result.push_str("\n");
         for (idx, lock) in self.graph.graph.node_references() {
             // result.push_str(format!("{} {}\n", idx.index(), lock).as_str());
         }

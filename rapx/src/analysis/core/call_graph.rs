@@ -64,15 +64,15 @@ impl<'tcx> CallGraph<'tcx> {
             self.graph.print_call_graph();
         }
 
-        // DEBUG
-        for (func_name, index) in &self.graph.node_registry {
-            rap_info!("{} | {}", index, func_name);
-        }
-        for (caller, callees) in &self.graph.function_calls {
-           for callee in callees {
-                rap_info!("{} -> {}", caller, callee);
-           }
-        }
+        // // DEBUG
+        // for (func_name, index) in &self.graph.node_registry {
+        //     rap_info!("{} | {}", index, func_name);
+        // }
+        // for (caller, callees) in &self.graph.function_calls {
+        //    for callee in callees {
+        //         rap_info!("{} -> {}", caller, callee);
+        //    }
+        // }
     }
 
     pub fn get_callee_def_path(&self, def_path: String) -> Option<HashSet<String>> {

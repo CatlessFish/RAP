@@ -75,7 +75,7 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
         // let callee_location = self.tcx.def_span(callee_def_id);
         if callee_def_id == self.def_id {
             // Recursion
-            println!("Warning! Find a recursion function which may cause stackoverflow!")
+            // println!("Warning! Find a recursion function which may cause stackoverflow!")
         }
         self.add_in_call_graph(&caller_def_path, callee_def_id, &callee_def_path);
     }

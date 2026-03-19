@@ -16,6 +16,12 @@ pub struct TagParser<'tcx> {
 pub enum LockTagItem {
     LockType(DefId, String, SerializableSpan),
     LockGuardType(DefId, String, SerializableSpan),
+    LockOp(
+        DefId,
+        usize, // LockArg
+        bool,  // GuardIrqDisabled
+        SerializableSpan,
+    ),
     IntrApi(
         DefId,
         bool, // true = Enable, false = Disable
@@ -81,6 +87,7 @@ impl Into<Span> for SerializableSpan {
 enum SerializableLockTagItem {
     LockType(SerializableDefId, String, SerializableSpan),
     LockGuardType(SerializableDefId, String, SerializableSpan),
+    LockOp(SerializableDefId, usize, bool, SerializableSpan),
     IntrApi(SerializableDefId, bool, bool, SerializableSpan),
     IsrEntry(SerializableDefId, SerializableSpan),
 }
@@ -96,6 +103,12 @@ impl SerializableLockTagItem {
             LockTagItem::LockGuardType(def_id, name, span) => Self::LockGuardType(
                 SerializableDefId::from_def_id(tcx, *def_id),
                 name.clone(),
+                span.clone(),
+            ),
+            LockTagItem::LockOp(def_id, lock_arg, guard_irq_disabled, span) => Self::LockOp(
+                SerializableDefId::from_def_id(tcx, *def_id),
+                *lock_arg,
+                *guard_irq_disabled,
                 span.clone(),
             ),
             LockTagItem::IntrApi(def_id, is_enable, is_nested, span) => Self::IntrApi(
@@ -118,6 +131,9 @@ impl SerializableLockTagItem {
             Self::LockGuardType(def_id, name, span) => def_id
                 .resolve(tcx)
                 .map(|did| LockTagItem::LockGuardType(did, name.clone(), span.clone())),
+            Self::LockOp(def_id, lock_arg, guard_irq_disabled, span) => def_id
+                .resolve(tcx)
+                .map(|did| LockTagItem::LockOp(did, *lock_arg, *guard_irq_disabled, span.clone())),
             Self::IntrApi(def_id, is_enable, is_nested, span) => def_id
                 .resolve(tcx)
                 .map(|did| LockTagItem::IntrApi(did, *is_enable, *is_nested, span.clone())),
@@ -131,6 +147,7 @@ impl SerializableLockTagItem {
         match self {
             Self::LockType(def_id, ..)
             | Self::LockGuardType(def_id, ..)
+            | Self::LockOp(def_id, ..)
             | Self::IntrApi(def_id, ..)
             | Self::IsrEntry(def_id, ..) => def_id,
         }
@@ -261,6 +278,79 @@ fn parse_intr_api(tokens: &TokenStream) -> Option<(bool, bool)> {
     }
 }
 
+fn parse_lock_op(tokens: &TokenStream) -> Option<(usize, bool)> {
+    let mut iter = tokens.iter();
+    let mut lock_arg = None;
+    let mut guard_irq_disabled = None;
+
+    while let Some(tree) = iter.next() {
+        let TokenTree::Token(
+            Token {
+                kind: TokenKind::Ident(sym, _),
+                ..
+            },
+            _,
+        ) = tree
+        else {
+            continue;
+        };
+
+        let key = sym.as_str();
+        let Some(TokenTree::Token(
+            Token {
+                kind: TokenKind::Eq,
+                ..
+            },
+            _,
+        )) = iter.next()
+        else {
+            continue;
+        };
+
+        match key {
+            "LockArg" => {
+                let Some(TokenTree::Token(
+                    Token {
+                        kind: TokenKind::Literal(lit),
+                        ..
+                    },
+                    _,
+                )) = iter.next()
+                else {
+                    return None;
+                };
+                lock_arg = lit.symbol.as_str().parse::<usize>().ok();
+                if lock_arg.is_none() {
+                    return None;
+                }
+            }
+            "GuardIrqDisabled" => {
+                let Some(TokenTree::Token(
+                    Token {
+                        kind: TokenKind::Ident(val_sym, _),
+                        ..
+                    },
+                    _,
+                )) = iter.next()
+                else {
+                    return None;
+                };
+                guard_irq_disabled = match val_sym.as_str() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => return None,
+                };
+            }
+            _ => {}
+        }
+    }
+
+    match (lock_arg, guard_irq_disabled) {
+        (Some(lock_arg), Some(guard_irq_disabled)) => Some((lock_arg, guard_irq_disabled)),
+        _ => None,
+    }
+}
+
 pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem> {
     match attr {
         Attribute::Parsed(_) => None,
@@ -321,6 +411,18 @@ pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem>
                         }
                     }
                 }
+                "LockOp" => match parse_lock_op(&tokens) {
+                    Some((lock_arg, guard_irq_disabled)) => Some(LockTagItem::LockOp(
+                        did,
+                        lock_arg,
+                        guard_irq_disabled,
+                        attr.span.into(),
+                    )),
+                    None => {
+                        rap_warn!("Failed to parse LockOp attribute for {:?}", did);
+                        None
+                    }
+                },
                 _ => {
                     rap_warn!("Unsupported Lock Tag: {}", path[1].as_str());
                     None
@@ -466,26 +568,32 @@ impl<'tcx> TagParser<'tcx> {
             }
 
             result.extend(self.collect_tags_for_def_id(did, |tag| {
-                matches!(tag, LockTagItem::IntrApi(..) | LockTagItem::IsrEntry(..))
+                matches!(
+                    tag,
+                    LockTagItem::LockOp(..) | LockTagItem::IntrApi(..) | LockTagItem::IsrEntry(..)
+                )
             }));
         }
 
         let mut lock_type_count = 0;
         let mut lock_guard_type_count = 0;
+        let mut lock_op_count = 0;
         let mut intr_api_count = 0;
         let mut isr_entry_count = 0;
         for item in &result {
             match item {
                 LockTagItem::LockType(..) => lock_type_count += 1,
                 LockTagItem::LockGuardType(..) => lock_guard_type_count += 1,
+                LockTagItem::LockOp(..) => lock_op_count += 1,
                 LockTagItem::IntrApi(..) => intr_api_count += 1,
                 LockTagItem::IsrEntry(..) => isr_entry_count += 1,
             }
         }
         rap_info!(
-            "Tags found: LockType = {}, LockGuardType = {}, IntrApi = {}, IsrEntry = {}",
+            "Tags found: LockType = {}, LockGuardType = {}, LockOp = {}, IntrApi = {}, IsrEntry = {}",
             lock_type_count,
             lock_guard_type_count,
+            lock_op_count,
             intr_api_count,
             isr_entry_count
         );

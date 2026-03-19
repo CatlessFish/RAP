@@ -103,8 +103,20 @@ pub mod lock {
         pub guard_type: LockGuardType,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub enum GuardIrqSemantics {
+        Unchanged,
+        DisabledWhileHeld,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct GuardAcquireInfo {
+        pub lock: LockInstance,
+        pub irq_semantics: GuardIrqSemantics,
+    }
+
     /// Map from `Local` LockGuard to possible LockInstances of a function
-    pub type LocalLockMap = HashMap<Local, HashSet<LockInstance>>;
+    pub type LocalLockMap = HashMap<Local, HashSet<GuardAcquireInfo>>;
 
     /// Each function's `LocalLockMap`
     pub type GlobalLockMap = HashMap<DefId, LocalLockMap>;
@@ -299,6 +311,9 @@ pub mod lock {
 
         /// Map from LockGuard Locals to LockInstance
         pub lockmap: GlobalLockMap,
+
+        /// Guard-returning APIs that still use the legacy fallback path.
+        pub missing_lock_op_apis: HashSet<DefId>,
     }
 
     impl ProgramLockInfo {
@@ -307,6 +322,7 @@ pub mod lock {
                 lock_instances: HashSet::new(),
                 lockguard_instances: HashSet::new(),
                 lockmap: GlobalLockMap::new(),
+                missing_lock_op_apis: HashSet::new(),
             }
         }
     }

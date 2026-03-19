@@ -105,9 +105,10 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                         .find(|(local, _)| **local == destination.local)
                     {
                         for candidate_lock in lock.iter() {
-                            state.update_lock_state(candidate_lock.clone(), LockState::MayHold);
+                            state
+                                .update_lock_state(candidate_lock.lock.clone(), LockState::MayHold);
                             state.add_callsite(
-                                candidate_lock.clone(),
+                                candidate_lock.lock.clone(),
                                 CallSite {
                                     location,
                                     caller_def_id: self.func_def_id,
@@ -118,7 +119,7 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                                 .borrow_mut()
                                 .lock_operations
                                 .insert(LockSite {
-                                    lock: candidate_lock.clone(),
+                                    lock: candidate_lock.lock.clone(),
                                     site: CallSite {
                                         caller_def_id: self.func_def_id,
                                         location,
@@ -157,9 +158,10 @@ impl<'tcx, 'a> Analysis<'tcx> for FuncLockSetAnalyzerInner<'a> {
                     .find(|(local, _)| **local == place.local)
                 {
                     for candidate_lock in lock.iter() {
-                        state.update_lock_state(candidate_lock.clone(), LockState::MustNotHold);
+                        state
+                            .update_lock_state(candidate_lock.lock.clone(), LockState::MustNotHold);
                         // Clear the lock_sites since the lock is released here
-                        if let Some(callsites) = state.lock_sites.get_mut(candidate_lock) {
+                        if let Some(callsites) = state.lock_sites.get_mut(&candidate_lock.lock) {
                             callsites.clear();
                         }
                     }

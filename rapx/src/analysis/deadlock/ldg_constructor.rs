@@ -161,7 +161,9 @@ struct InterruptEdgeCollector<'tcx, 'a> {
     func_def_id: DefId,
     program_lock_set: &'a ProgramLockSet,
     program_isr_info: &'a ProgramIsrInfo,
+    isr_lock_ops_by_lock: &'a std::collections::HashMap<LockInstance, LockSite>,
     locksite_pairs: LockSitePairsWithCallSite,
+    seen_locks: HashSet<LockInstance>,
 }
 
 impl<'tcx, 'a> InterruptEdgeCollector<'tcx, 'a> {
@@ -170,13 +172,16 @@ impl<'tcx, 'a> InterruptEdgeCollector<'tcx, 'a> {
         func_def_id: DefId,
         program_lock_set: &'a ProgramLockSet,
         program_isr_info: &'a ProgramIsrInfo,
+        isr_lock_ops_by_lock: &'a std::collections::HashMap<LockInstance, LockSite>,
     ) -> Self {
         Self {
             tcx,
             func_def_id,
             program_lock_set,
             program_isr_info,
+            isr_lock_ops_by_lock,
             locksite_pairs: HashSet::new(),
+            seen_locks: HashSet::new(),
         }
     }
 
@@ -216,29 +221,38 @@ impl<'tcx, 'a> Visitor<'tcx> for InterruptEdgeCollector<'tcx, 'a> {
             None => return,
         };
 
-        // 3. Iterate through all isr functions
-        for isr_def_id in self.program_isr_info.isr_funcs.iter() {
-            let isr_lock_ops = match self.program_lock_set.get(isr_def_id) {
-                Some(func_info) => &func_info.lock_operations,
-                None => continue,
+        for (held_lock, state) in callsite_lockset.lock_states.iter() {
+            if *state != LockState::MayHold {
+                continue;
+            }
+
+            if !self.seen_locks.insert(held_lock.clone()) {
+                continue;
+            }
+
+            let Some(held_callsite) = callsite_lockset
+                .lock_sites
+                .get(held_lock)
+                .and_then(|sites| sites.iter().next().copied())
+            else {
+                continue;
             };
-            self.locksite_pairs.extend(
-                extract_locksite_pairs(callsite_lockset, isr_lock_ops)
-                    .iter()
-                    .map(
-                        // Append CallSite information
-                        |pair| {
-                            (
-                                pair.0.clone(),
-                                pair.1.clone(),
-                                CallSite {
-                                    caller_def_id: self.func_def_id,
-                                    location,
-                                },
-                            )
-                        },
-                    ),
-            );
+
+            let Some(new_lock_site) = self.isr_lock_ops_by_lock.get(held_lock) else {
+                continue;
+            };
+
+            self.locksite_pairs.insert((
+                new_lock_site.clone(),
+                LockSite {
+                    lock: held_lock.clone(),
+                    site: held_callsite,
+                },
+                CallSite {
+                    caller_def_id: self.func_def_id,
+                    location,
+                },
+            ));
         }
     }
 }
@@ -247,6 +261,7 @@ pub struct LDGConstructor<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     program_lock_set: &'a ProgramLockSet,
     program_isr_info: &'a ProgramIsrInfo,
+    isr_lock_ops_by_lock: std::collections::HashMap<LockInstance, LockSite>,
 
     graph: LockDependencyGraph,
 }
@@ -261,6 +276,7 @@ impl<'tcx, 'a> LDGConstructor<'tcx, 'a> {
             tcx,
             program_isr_info,
             program_lock_set,
+            isr_lock_ops_by_lock: collect_isr_lock_ops_by_lock(program_lock_set, program_isr_info),
             graph: LockDependencyGraph::new(),
         }
     }
@@ -281,6 +297,7 @@ impl<'tcx, 'a> LDGConstructor<'tcx, 'a> {
                 def_id,
                 self.program_lock_set,
                 self.program_isr_info,
+                &self.isr_lock_ops_by_lock,
             )
             .collect();
 
@@ -341,4 +358,25 @@ impl<'tcx, 'a> LDGConstructor<'tcx, 'a> {
     pub fn into_graph(self) -> LockDependencyGraph {
         self.graph
     }
+}
+
+fn collect_isr_lock_ops_by_lock(
+    program_lock_set: &ProgramLockSet,
+    program_isr_info: &ProgramIsrInfo,
+) -> std::collections::HashMap<LockInstance, LockSite> {
+    let mut isr_lock_ops_by_lock = std::collections::HashMap::new();
+
+    for isr_def_id in program_isr_info.isr_funcs.iter() {
+        let Some(func_info) = program_lock_set.get(isr_def_id) else {
+            continue;
+        };
+
+        for lock_site in func_info.lock_operations.iter() {
+            isr_lock_ops_by_lock
+                .entry(lock_site.lock.clone())
+                .or_insert_with(|| lock_site.clone());
+        }
+    }
+
+    isr_lock_ops_by_lock
 }

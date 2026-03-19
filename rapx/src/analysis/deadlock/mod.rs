@@ -59,28 +59,33 @@ impl<'tcx> DeadlockDetector<'tcx> {
     pub fn run_with_tag_io(&mut self, save_tags: Option<&str>, load_tags: Option<&str>) {
         rap_info!("Executing Deadlock Detection");
 
-        // Steps:
-        // Dependencies
+        rap_info!("Deadlock phase: build callgraph");
         let mut callgraph_analyzer = CallGraphAnalyzer::new(self.tcx);
         callgraph_analyzer.start();
         self.callgraph = callgraph_analyzer.graph;
 
-        // 0. Parse Tags
+        rap_info!("Deadlock phase: parse tags");
         let tag_parser = TagParser::new(self.tcx);
         let tags = tag_parser.load_analyze_save(load_tags, save_tags);
         self.parsed_tags = tags;
 
-        // 1. Collect Locks and LockGuards
+        rap_info!("Deadlock phase: collect lock information");
         let mut lock_collector = LockCollector::new(self.tcx, &self.parsed_tags);
         self.program_lock_info = lock_collector.collect();
         lock_collector.print_result();
+        if !self.program_lock_info.missing_lock_op_apis.is_empty() {
+            rap_warn!(
+                "Deadlock phase: {} guard-returning APIs are still analyzed via legacy fallback because they are missing LockOp tags",
+                self.program_lock_info.missing_lock_op_apis.len()
+            );
+        }
 
-        // 2. Analysis LockSet
+        rap_info!("Deadlock phase: analyze locksets");
         let mut lockset_analyzer = LockSetAnalyzer::new(self.tcx, &self.program_lock_info.lockmap);
         self.program_lock_set = lockset_analyzer.run();
         // lockset_analyzer.print_result();
 
-        // 3. Identify ISRs and Analysis InterruptSet
+        rap_info!("Deadlock phase: analyze interrupt state");
         let mut isr_analyzer = IsrAnalyzer::new(
             self.tcx,
             &self.callgraph,
@@ -90,14 +95,14 @@ impl<'tcx> DeadlockDetector<'tcx> {
         self.program_isr_info = isr_analyzer.run();
         // isr_analyzer.print_result();
 
-        // 4. Construct Lock Dependency Graph
+        rap_info!("Deadlock phase: construct dependency graph");
         let mut ldg_constructor =
             LDGConstructor::new(self.tcx, &self.program_lock_set, &self.program_isr_info);
         ldg_constructor.run();
         // ldg_constructor.print_result();
         self.lock_dependency_graph = ldg_constructor.into_graph();
 
-        // 5. Detect cycles on LDG
+        rap_info!("Deadlock phase: report cycles");
         let mut lock_reporter = DeadlockReporter::new(self.tcx, &self.lock_dependency_graph);
         lock_reporter.run();
     }

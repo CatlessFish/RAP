@@ -44,13 +44,13 @@ pub struct SerializableDefId {
 }
 
 impl SerializableDefId {
-    pub fn from_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Self {
+    pub fn from_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Self> {
         let crate_num = def_id.krate;
         let crate_name = tcx.crate_name(crate_num).as_str().to_string();
-        SerializableDefId {
-            def_path: format!("{}::{}", crate_name, tcx.def_path_str(def_id)),
+        normalized_def_path(tcx, def_id).map(|def_path| SerializableDefId {
+            def_path,
             crate_name,
-        }
+        })
     }
 
     pub fn resolve(&self, tcx: TyCtxt<'_>) -> Option<DefId> {
@@ -59,7 +59,7 @@ impl SerializableDefId {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct SerializableSpan {
     pub lo: u32,
     pub hi: u32,
@@ -83,7 +83,7 @@ impl Into<Span> for SerializableSpan {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 enum SerializableLockTagItem {
     LockType(SerializableDefId, String, SerializableSpan),
     LockGuardType(SerializableDefId, String, SerializableSpan),
@@ -93,33 +93,34 @@ enum SerializableLockTagItem {
 }
 
 impl SerializableLockTagItem {
-    fn from_runtime(tcx: TyCtxt<'_>, item: &LockTagItem) -> Self {
+    fn from_runtime(tcx: TyCtxt<'_>, item: &LockTagItem) -> Option<Self> {
         match item {
-            LockTagItem::LockType(def_id, name, span) => Self::LockType(
-                SerializableDefId::from_def_id(tcx, *def_id),
+            LockTagItem::LockType(def_id, name, span) => Some(Self::LockType(
+                SerializableDefId::from_def_id(tcx, *def_id)?,
                 name.clone(),
                 span.clone(),
-            ),
-            LockTagItem::LockGuardType(def_id, name, span) => Self::LockGuardType(
-                SerializableDefId::from_def_id(tcx, *def_id),
+            )),
+            LockTagItem::LockGuardType(def_id, name, span) => Some(Self::LockGuardType(
+                SerializableDefId::from_def_id(tcx, *def_id)?,
                 name.clone(),
                 span.clone(),
-            ),
-            LockTagItem::LockOp(def_id, lock_arg, guard_irq_disabled, span) => Self::LockOp(
-                SerializableDefId::from_def_id(tcx, *def_id),
+            )),
+            LockTagItem::LockOp(def_id, lock_arg, guard_irq_disabled, span) => Some(Self::LockOp(
+                SerializableDefId::from_def_id(tcx, *def_id)?,
                 *lock_arg,
                 *guard_irq_disabled,
                 span.clone(),
-            ),
-            LockTagItem::IntrApi(def_id, is_enable, is_nested, span) => Self::IntrApi(
-                SerializableDefId::from_def_id(tcx, *def_id),
+            )),
+            LockTagItem::IntrApi(def_id, is_enable, is_nested, span) => Some(Self::IntrApi(
+                SerializableDefId::from_def_id(tcx, *def_id)?,
                 *is_enable,
                 *is_nested,
                 span.clone(),
-            ),
-            LockTagItem::IsrEntry(def_id, span) => {
-                Self::IsrEntry(SerializableDefId::from_def_id(tcx, *def_id), span.clone())
-            }
+            )),
+            LockTagItem::IsrEntry(def_id, span) => Some(Self::IsrEntry(
+                SerializableDefId::from_def_id(tcx, *def_id)?,
+                span.clone(),
+            )),
         }
     }
 
@@ -151,6 +152,79 @@ impl SerializableLockTagItem {
             | Self::IntrApi(def_id, ..)
             | Self::IsrEntry(def_id, ..) => def_id,
         }
+    }
+
+    fn sort_key(&self) -> (u8, &str) {
+        match self {
+            Self::LockType(def_id, ..) => (0, def_id.def_path.as_str()),
+            Self::LockGuardType(def_id, ..) => (1, def_id.def_path.as_str()),
+            Self::LockOp(def_id, ..) => (2, def_id.def_path.as_str()),
+            Self::IntrApi(def_id, ..) => (3, def_id.def_path.as_str()),
+            Self::IsrEntry(def_id, ..) => (4, def_id.def_path.as_str()),
+        }
+    }
+}
+
+fn normalized_path_segments(def_path: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let chars: Vec<char> = def_path.chars().collect();
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 && index + 1 < chars.len() && chars[index + 1] == ':' => {
+                if !current.is_empty() {
+                    segments.push(std::mem::take(&mut current));
+                }
+                index += 1;
+            }
+            _ if depth == 0 => current.push(ch),
+            _ => {}
+        }
+        index += 1;
+    }
+
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
+    segments
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn is_body_local_item(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let mut current = def_id;
+    while let Some(parent) = tcx.opt_parent(current) {
+        if matches!(
+            tcx.def_kind(parent),
+            DefKind::Fn | DefKind::AssocFn | DefKind::Closure
+        ) {
+            return true;
+        }
+        current = parent;
+    }
+    false
+}
+
+fn normalized_def_path(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
+    if is_body_local_item(tcx, def_id) {
+        return None;
+    }
+
+    let crate_name = tcx.crate_name(def_id.krate).as_str().to_string();
+    let raw_path = format!("{}::{}", crate_name, tcx.def_path_str(def_id));
+    let normalized_segments = normalized_path_segments(&raw_path);
+    if normalized_segments.is_empty() {
+        None
+    } else {
+        Some(normalized_segments.join("::"))
     }
 }
 
@@ -456,7 +530,7 @@ impl<'tcx> TagParser<'tcx> {
         load_path: Option<&str>,
         save_path: Option<&str>,
     ) -> Vec<LockTagItem> {
-        let mut persisted_tags = if let Some(load_path) = load_path {
+        let loaded_persisted_tags = if let Some(load_path) = load_path {
             match std::fs::read_to_string(load_path) {
                 Ok(content) => match serde_json::from_str::<Vec<SerializableLockTagItem>>(&content)
                 {
@@ -480,10 +554,18 @@ impl<'tcx> TagParser<'tcx> {
 
         let mut unresolved_cached_tags = 0;
         let mut reported_unresolved_paths: HashSet<String> = HashSet::new();
-        let mut tags: Vec<LockTagItem> = persisted_tags
+        let mut normalized_persisted_tags: HashSet<SerializableLockTagItem> = HashSet::new();
+        let mut tags: Vec<LockTagItem> = loaded_persisted_tags
             .iter()
             .filter_map(|tag| match tag.resolve(self.tcx) {
-                Some(tag) => Some(tag),
+                Some(runtime_tag) => {
+                    if let Some(serializable_tag) =
+                        SerializableLockTagItem::from_runtime(self.tcx, &runtime_tag)
+                    {
+                        normalized_persisted_tags.insert(serializable_tag);
+                    }
+                    Some(runtime_tag)
+                }
                 None => {
                     unresolved_cached_tags += 1;
                     let def_id = tag.def_id();
@@ -511,14 +593,25 @@ impl<'tcx> TagParser<'tcx> {
         }
 
         let analyzed_tags = self.analyze_current_crate();
-        persisted_tags.extend(
-            analyzed_tags
-                .iter()
-                .map(|tag| SerializableLockTagItem::from_runtime(self.tcx, tag)),
-        );
+        let mut non_persistable_local_tags = 0;
+        for tag in &analyzed_tags {
+            if let Some(serializable_tag) = SerializableLockTagItem::from_runtime(self.tcx, tag) {
+                normalized_persisted_tags.insert(serializable_tag);
+            } else {
+                non_persistable_local_tags += 1;
+            }
+        }
+        if non_persistable_local_tags > 0 {
+            rap_info!(
+                "Skipped {} body-local tags that are not persistable across compilation sessions",
+                non_persistable_local_tags
+            );
+        }
         tags.extend(analyzed_tags);
 
         if let Some(save_path) = save_path {
+            let mut persisted_tags: Vec<_> = normalized_persisted_tags.into_iter().collect();
+            persisted_tags.sort_by(|lhs, rhs| lhs.sort_key().cmp(&rhs.sort_key()));
             match serde_json::to_string_pretty(&persisted_tags) {
                 Ok(json) => {
                     if let Err(e) = std::fs::write(save_path, json) {

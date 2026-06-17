@@ -125,6 +125,15 @@ pub enum AnalysisKind {
         #[arg(long)]
         load_tags: Option<String>,
     },
+    /// scan for atomic mode violations
+    AtomicModeViolation {
+        /// (optional) Save analyzed tags to JSON file
+        #[arg(long)]
+        save_tags: Option<String>,
+        /// (optional) Load tags from JSON file
+        #[arg(long)]
+        load_tags: Option<String>,
+    },
 }
 
 // use command string to automatically generate help messages

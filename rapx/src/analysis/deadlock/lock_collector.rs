@@ -117,6 +117,7 @@ struct LockTypeCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     parsed_tags: &'a [LockTagItem],
     lock_types: HashSet<AdtDef<'tcx>>,
+    sleeping_lock_types: HashSet<AdtDef<'tcx>>,
 }
 
 impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
@@ -125,35 +126,48 @@ impl<'tcx, 'a> LockTypeCollector<'tcx, 'a> {
             tcx,
             parsed_tags,
             lock_types: HashSet::new(),
+            sleeping_lock_types: HashSet::new(),
         }
     }
 
     fn run(&mut self) {
         for tag in self.parsed_tags {
-            if let LockTagItem::LockType(did, _name, _) = tag {
-                self.lock_types.insert(self.tcx.adt_def(*did));
+            if let LockTagItem::LockType(did, _name, may_sleep, _) = tag {
+                let adt = self.tcx.adt_def(*did);
+                self.lock_types.insert(adt);
+                if *may_sleep {
+                    self.sleeping_lock_types.insert(adt);
+                }
             }
         }
     }
 
-    pub fn collect(&mut self) -> HashSet<AdtDef<'tcx>> {
+    pub fn collect(&mut self) -> (HashSet<AdtDef<'tcx>>, HashSet<AdtDef<'tcx>>) {
         self.run();
-        self.lock_types.clone()
+        (self.lock_types.clone(), self.sleeping_lock_types.clone())
     }
 }
 
 struct LockInstanceCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
     lock_types: HashSet<AdtDef<'tcx>>,
+    sleeping_lock_types: HashSet<AdtDef<'tcx>>,
     lock_instances: HashSet<LockInstance>,
+    sleeping_lock_instances: HashSet<LockInstance>,
 }
 
 impl<'tcx> LockInstanceCollector<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, lock_types: HashSet<AdtDef<'tcx>>) -> Self {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        lock_types: HashSet<AdtDef<'tcx>>,
+        sleeping_lock_types: HashSet<AdtDef<'tcx>>,
+    ) -> Self {
         Self {
             tcx,
             lock_types,
+            sleeping_lock_types,
             lock_instances: HashSet::new(),
+            sleeping_lock_instances: HashSet::new(),
         }
     }
 
@@ -218,11 +232,15 @@ impl<'tcx> LockInstanceCollector<'tcx> {
         };
 
         if self.lock_types.contains(adt_def) {
-            self.lock_instances.insert(LockInstance {
+            let instance = LockInstance {
                 root: root.clone(),
                 field_path,
                 span,
-            });
+            };
+            if self.sleeping_lock_types.contains(adt_def) {
+                self.sleeping_lock_instances.insert(instance.clone());
+            }
+            self.lock_instances.insert(instance);
             path_stack.remove(&ty);
             return;
         }
@@ -276,9 +294,12 @@ impl<'tcx> LockInstanceCollector<'tcx> {
         }
     }
 
-    pub fn collect(&mut self) -> HashSet<LockInstance> {
+    pub fn collect(&mut self) -> (HashSet<LockInstance>, HashSet<LockInstance>) {
         self.run();
-        self.lock_instances.clone()
+        (
+            self.lock_instances.clone(),
+            self.sleeping_lock_instances.clone(),
+        )
     }
 }
 
@@ -286,15 +307,19 @@ struct LockMapBuilder<'tcx> {
     tcx: TyCtxt<'tcx>,
     func_def_id: DefId,
     lock_types: HashSet<AdtDef<'tcx>>,
+    sleeping_lock_types: HashSet<AdtDef<'tcx>>,
     lockguard_instances: HashSet<LockGuardInstance>,
     lock_ops: LockOpSemanticsMap,
     callee_return_summaries: ReturnSummaryMap,
+    callee_lockmaps: GlobalLockMap,
+    known_sleeping_locks: HashSet<LockInstance>,
     body: &'tcx Body<'tcx>,
     local_tracked_places: LocalTrackedPlaceMap,
     lockmap: LocalLockMap,
 
     // Tracks newly discovered non-static abstract instances for global reporting.
     discovered_lock_instances: HashSet<LockInstance>,
+    sleeping_discovered_lock_instances: HashSet<LockInstance>,
     missing_lock_op_apis: HashSet<DefId>,
 }
 
@@ -304,21 +329,28 @@ impl<'tcx> LockMapBuilder<'tcx> {
         func_def_id: DefId,
         lockguard_instances: HashSet<LockGuardInstance>,
         lock_types: HashSet<AdtDef<'tcx>>,
+        sleeping_lock_types: HashSet<AdtDef<'tcx>>,
         lock_ops: LockOpSemanticsMap,
         callee_return_summaries: ReturnSummaryMap,
+        callee_lockmaps: GlobalLockMap,
+        known_sleeping_locks: HashSet<LockInstance>,
     ) -> Self {
         let body = tcx.optimized_mir(func_def_id);
         Self {
             tcx,
             func_def_id,
             lock_types,
+            sleeping_lock_types,
             lockguard_instances,
             lock_ops,
             callee_return_summaries,
+            callee_lockmaps,
+            known_sleeping_locks,
             body,
             local_tracked_places: HashMap::new(),
             lockmap: LocalLockMap::new(),
             discovered_lock_instances: HashSet::new(),
+            sleeping_discovered_lock_instances: HashSet::new(),
             missing_lock_op_apis: HashSet::new(),
         }
     }
@@ -387,6 +419,17 @@ impl<'tcx> LockMapBuilder<'tcx> {
         format!("{ty}")
     }
 
+    fn direct_lock_adt(&self, ty: Ty<'tcx>) -> Option<AdtDef<'tcx>> {
+        if let Some(inner_ty) = self.wrapper_inner_ty(ty) {
+            return self.direct_lock_adt(inner_ty);
+        }
+
+        let TyKind::Adt(adt_def, _) = ty.kind() else {
+            return None;
+        };
+        self.lock_types.contains(adt_def).then_some(*adt_def)
+    }
+
     fn collect_type_bucket_lock_instances_from_ty(
         &self,
         ty: Ty<'tcx>,
@@ -394,6 +437,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
         field_depth: usize,
         path_stack: &mut HashSet<Ty<'tcx>>,
         instances: &mut HashSet<LockInstance>,
+        sleeping_instances: &mut HashSet<LockInstance>,
     ) {
         // Type buckets are intentionally coarse: once we lose a precise static root,
         // all values of the same lock-containing type collapse to one abstract root.
@@ -408,6 +452,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
                 field_depth,
                 path_stack,
                 instances,
+                sleeping_instances,
             );
             path_stack.remove(&ty);
             return;
@@ -419,13 +464,17 @@ impl<'tcx> LockMapBuilder<'tcx> {
         };
 
         if self.lock_types.contains(adt_def) {
-            instances.insert(LockInstance {
+            let instance = LockInstance {
                 root: LockRoot::TypeBucket {
                     type_name: self.type_bucket_name(ty),
                 },
                 field_path: Vec::new(),
                 span,
-            });
+            };
+            if self.sleeping_lock_types.contains(adt_def) {
+                sleeping_instances.insert(instance.clone());
+            }
+            instances.insert(instance);
             path_stack.remove(&ty);
             return;
         }
@@ -437,6 +486,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
                 field_depth + 1,
                 path_stack,
                 instances,
+                sleeping_instances,
             );
         }
 
@@ -507,11 +557,11 @@ impl<'tcx> LockMapBuilder<'tcx> {
         &mut self,
         place: &Place<'tcx>,
         span: Span,
-    ) -> HashSet<LockInstance> {
+    ) -> (HashSet<LockInstance>, HashSet<LockInstance>) {
         let place_ty = place.ty(self.body, self.tcx).ty;
         let mut path_stack = HashSet::new();
         if !self.ty_may_reach_lock(place_ty, 0, &mut path_stack) {
-            return HashSet::new();
+            return (HashSet::new(), HashSet::new());
         }
 
         // Prefer precise static-root recovery whenever the MIR value still carries it.
@@ -521,11 +571,17 @@ impl<'tcx> LockMapBuilder<'tcx> {
             .map(|tracked_place| tracked_place.to_lock_instance(span))
             .collect();
         if !static_instances.is_empty() {
-            return static_instances;
+            let sleeping_static_instances = self
+                .direct_lock_adt(place_ty)
+                .filter(|adt| self.sleeping_lock_types.contains(adt))
+                .map(|_| static_instances.clone())
+                .unwrap_or_default();
+            return (static_instances, sleeping_static_instances);
         }
 
         let mut path_stack = HashSet::new();
         let mut type_bucket_instances = HashSet::new();
+        let mut sleeping_type_bucket_instances = HashSet::new();
         // Fall back to the coarse type bucket only when no precise static root survives.
         self.collect_type_bucket_lock_instances_from_ty(
             place_ty,
@@ -533,8 +589,9 @@ impl<'tcx> LockMapBuilder<'tcx> {
             0,
             &mut path_stack,
             &mut type_bucket_instances,
+            &mut sleeping_type_bucket_instances,
         );
-        type_bucket_instances
+        (type_bucket_instances, sleeping_type_bucket_instances)
     }
 
     fn insert_local_roots(&mut self, local: Local, roots: HashSet<TrackedPlace>) {
@@ -551,12 +608,15 @@ impl<'tcx> LockMapBuilder<'tcx> {
         &mut self,
         local: Local,
         locks: HashSet<LockInstance>,
+        sleeping_locks: HashSet<LockInstance>,
         irq_semantics: GuardIrqSemantics,
     ) {
         if locks.is_empty() {
             return;
         }
         self.discovered_lock_instances.extend(locks.clone());
+        self.sleeping_discovered_lock_instances
+            .extend(sleeping_locks);
         self.lockmap
             .entry(local)
             .or_default()
@@ -564,6 +624,22 @@ impl<'tcx> LockMapBuilder<'tcx> {
                 lock,
                 irq_semantics: irq_semantics.clone(),
             }));
+    }
+
+    fn record_guard_acquire_infos(&mut self, local: Local, infos: HashSet<GuardAcquireInfo>) {
+        if infos.is_empty() {
+            return;
+        }
+        let discovered_locks: HashSet<_> = infos.iter().map(|info| info.lock.clone()).collect();
+        self.discovered_lock_instances
+            .extend(discovered_locks.iter().cloned());
+        self.sleeping_discovered_lock_instances.extend(
+            discovered_locks
+                .iter()
+                .filter(|lock| self.known_sleeping_locks.contains(*lock))
+                .cloned(),
+        );
+        self.lockmap.entry(local).or_default().extend(infos);
     }
 
     fn infer_guard_irq_semantics(
@@ -595,6 +671,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
     ) -> (
         LocalLockMap,
         HashSet<LockInstance>,
+        HashSet<LockInstance>,
         HashSet<TrackedPlace>,
         HashSet<DefId>,
     ) {
@@ -602,6 +679,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
         (
             self.lockmap.clone(),
             self.discovered_lock_instances.clone(),
+            self.sleeping_discovered_lock_instances.clone(),
             self.local_tracked_places
                 .get(&RETURN_PLACE)
                 .cloned()
@@ -640,11 +718,16 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                                 destination.local,
                                 fallback_irq_semantics.clone(),
                             );
-                            let locks = self.resolve_lock_instances_from_place(
+                            let (locks, sleeping_locks) = self.resolve_lock_instances_from_place(
                                 place,
                                 terminator.source_info.span,
                             );
-                            self.record_guard_locks(destination.local, locks, irq_semantics);
+                            self.record_guard_locks(
+                                destination.local,
+                                locks,
+                                sleeping_locks,
+                                irq_semantics,
+                            );
                         }
                     } else {
                         rap_warn!(
@@ -655,6 +738,17 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                     }
                 } else if let Some(receiver) = args.first() {
                     self.missing_lock_op_apis.insert(callee);
+                    if let Some(return_infos) = self
+                        .callee_lockmaps
+                        .get(&callee)
+                        .and_then(|lockmap| lockmap.get(&RETURN_PLACE))
+                        .cloned()
+                    {
+                        if !return_infos.is_empty() {
+                            self.record_guard_acquire_infos(destination.local, return_infos);
+                            return;
+                        }
+                    }
                     match &receiver.node {
                         Operand::Copy(place) | Operand::Move(place) => {
                             let irq_semantics = self.infer_guard_irq_semantics(
@@ -662,11 +756,16 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                                 destination.local,
                                 GuardIrqSemantics::Unchanged,
                             );
-                            let locks = self.resolve_lock_instances_from_place(
+                            let (locks, sleeping_locks) = self.resolve_lock_instances_from_place(
                                 place,
                                 terminator.source_info.span,
                             );
-                            self.record_guard_locks(destination.local, locks, irq_semantics);
+                            self.record_guard_locks(
+                                destination.local,
+                                locks,
+                                sleeping_locks,
+                                irq_semantics,
+                            );
                         }
                         Operand::Constant(..) => {}
                     }
@@ -719,8 +818,10 @@ pub struct LockCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     parsed_tags: &'a [LockTagItem],
     lock_types: HashSet<AdtDef<'tcx>>,
+    sleeping_lock_types: HashSet<AdtDef<'tcx>>,
     lock_ops: LockOpSemanticsMap,
     lock_instances: HashSet<LockInstance>,
+    sleeping_lock_instances: HashSet<LockInstance>,
     lockguard_instances: HashSet<LockGuardInstance>,
     global_lockmap: GlobalLockMap,
     missing_lock_op_apis: HashSet<DefId>,
@@ -732,8 +833,10 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
             tcx,
             parsed_tags,
             lock_types: HashSet::new(),
+            sleeping_lock_types: HashSet::new(),
             lock_ops: HashMap::new(),
             lock_instances: HashSet::new(),
+            sleeping_lock_instances: HashSet::new(),
             lockguard_instances: HashSet::new(),
             global_lockmap: GlobalLockMap::new(),
             missing_lock_op_apis: HashSet::new(),
@@ -777,19 +880,28 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
         );
 
         let mut locktype_collector = LockTypeCollector::new(self.tcx, self.parsed_tags);
-        self.lock_types = locktype_collector.collect();
+        let (lock_types, sleeping_lock_types) = locktype_collector.collect();
+        self.lock_types = lock_types;
+        self.sleeping_lock_types = sleeping_lock_types;
         rap_debug!(
-            "Deadlock lock collector: identified {} tagged lock types",
-            self.lock_types.len()
+            "Deadlock lock collector: identified {} tagged lock types ({} sleeping)",
+            self.lock_types.len(),
+            self.sleeping_lock_types.len()
         );
 
-        let mut lock_instance_collector =
-            LockInstanceCollector::new(self.tcx, self.lock_types.clone());
-        self.lock_instances = lock_instance_collector.collect();
+        let mut lock_instance_collector = LockInstanceCollector::new(
+            self.tcx,
+            self.lock_types.clone(),
+            self.sleeping_lock_types.clone(),
+        );
+        let (lock_instances, sleeping_lock_instances) = lock_instance_collector.collect();
+        self.lock_instances = lock_instances;
+        self.sleeping_lock_instances = sleeping_lock_instances;
         let initial_static_instances = self.lock_instances.len();
         rap_debug!(
-            "Deadlock lock collector: collected {} static-root lock instances before lockmap propagation",
-            initial_static_instances
+            "Deadlock lock collector: collected {} static-root lock instances before lockmap propagation ({} sleeping)",
+            initial_static_instances,
+            self.sleeping_lock_instances.len()
         );
 
         let function_ids: Vec<_> = self
@@ -820,11 +932,19 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
                     *def_id,
                     self.lockguard_instances.clone(),
                     self.lock_types.clone(),
+                    self.sleeping_lock_types.clone(),
                     self.lock_ops.clone(),
                     return_summaries.clone(),
+                    self.global_lockmap.clone(),
+                    self.sleeping_lock_instances.clone(),
                 );
-                let (func_lockmap, discovered_locks, return_summary, missing_lock_ops) =
-                    lockmap_builder.collect();
+                let (
+                    func_lockmap,
+                    discovered_locks,
+                    sleeping_discovered_locks,
+                    return_summary,
+                    missing_lock_ops,
+                ) = lockmap_builder.collect();
 
                 if self.global_lockmap.get(def_id) != Some(&func_lockmap) {
                     self.global_lockmap.insert(*def_id, func_lockmap);
@@ -845,6 +965,8 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
                     changed = true;
                     discovered_this_round += new_instance_count;
                 }
+                self.sleeping_lock_instances
+                    .extend(sleeping_discovered_locks);
                 self.missing_lock_op_apis.extend(missing_lock_ops);
             }
 
@@ -905,15 +1027,18 @@ impl<'tcx, 'a> LockCollector<'tcx, 'a> {
             lockguard_instances: self.lockguard_instances.clone(),
             lockmap: self.global_lockmap.clone(),
             missing_lock_op_apis: self.missing_lock_op_apis.clone(),
+            sleeping_lock_instances: self.sleeping_lock_instances.clone(),
         }
     }
 
     pub fn print_result(&self) {
         rap_info!(
-            "{} Lock Types, {} LockOps, {} Lock Instances, {} LockGuard Instances",
+            "{} Lock Types ({} sleeping), {} LockOps, {} Lock Instances ({} sleeping), {} LockGuard Instances",
             self.lock_types.len(),
+            self.sleeping_lock_types.len(),
             self.lock_ops.len(),
             self.lock_instances.len(),
+            self.sleeping_lock_instances.len(),
             self.lockguard_instances.len(),
         );
         if !self.missing_lock_op_apis.is_empty() {

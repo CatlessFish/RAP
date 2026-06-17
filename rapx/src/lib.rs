@@ -32,7 +32,8 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::{
     analysis::{
-        core::alias_analysis::mfp::MfpAliasAnalyzer, deadlock::DeadlockDetector, scan::ScanAnalysis,
+        atomic_mode::AtomicModeDetector, core::alias_analysis::mfp::MfpAliasAnalyzer,
+        deadlock::DeadlockDetector, scan::ScanAnalysis,
     },
     cli::{AliasStrategyKind, AnalysisKind, Commands, ExtractKind, OptLevel, RapxArgs},
 };
@@ -297,6 +298,13 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 load_tags,
             } => {
                 DeadlockDetector::new(tcx)
+                    .run_with_tag_io(save_tags.as_deref(), load_tags.as_deref());
+            }
+            AnalysisKind::AtomicModeViolation {
+                save_tags,
+                load_tags,
+            } => {
+                AtomicModeDetector::new(tcx)
                     .run_with_tag_io(save_tags.as_deref(), load_tags.as_deref());
             }
         },

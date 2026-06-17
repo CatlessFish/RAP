@@ -1,3 +1,4 @@
+pub mod atomic_mode;
 pub mod core;
 pub mod deadlock;
 pub mod extract;

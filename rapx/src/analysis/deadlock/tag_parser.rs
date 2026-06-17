@@ -14,7 +14,7 @@ pub struct TagParser<'tcx> {
 
 #[derive(Debug, Clone)]
 pub enum LockTagItem {
-    LockType(DefId, String, SerializableSpan),
+    LockType(DefId, String, bool /* may_sleep */, SerializableSpan),
     LockGuardType(DefId, String, SerializableSpan),
     LockOp(
         DefId,
@@ -85,7 +85,12 @@ impl Into<Span> for SerializableSpan {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 enum SerializableLockTagItem {
-    LockType(SerializableDefId, String, SerializableSpan),
+    LockType(
+        SerializableDefId,
+        String,
+        bool, /* may_sleep */
+        SerializableSpan,
+    ),
     LockGuardType(SerializableDefId, String, SerializableSpan),
     LockOp(SerializableDefId, usize, bool, SerializableSpan),
     IntrApi(SerializableDefId, bool, bool, SerializableSpan),
@@ -95,9 +100,10 @@ enum SerializableLockTagItem {
 impl SerializableLockTagItem {
     fn from_runtime(tcx: TyCtxt<'_>, item: &LockTagItem) -> Option<Self> {
         match item {
-            LockTagItem::LockType(def_id, name, span) => Some(Self::LockType(
+            LockTagItem::LockType(def_id, name, may_sleep, span) => Some(Self::LockType(
                 SerializableDefId::from_def_id(tcx, *def_id)?,
                 name.clone(),
+                *may_sleep,
                 span.clone(),
             )),
             LockTagItem::LockGuardType(def_id, name, span) => Some(Self::LockGuardType(
@@ -126,9 +132,9 @@ impl SerializableLockTagItem {
 
     fn resolve(&self, tcx: TyCtxt<'_>) -> Option<LockTagItem> {
         match self {
-            Self::LockType(def_id, name, span) => def_id
+            Self::LockType(def_id, name, may_sleep, span) => def_id
                 .resolve(tcx)
-                .map(|did| LockTagItem::LockType(did, name.clone(), span.clone())),
+                .map(|did| LockTagItem::LockType(did, name.clone(), *may_sleep, span.clone())),
             Self::LockGuardType(def_id, name, span) => def_id
                 .resolve(tcx)
                 .map(|did| LockTagItem::LockGuardType(did, name.clone(), span.clone())),
@@ -352,6 +358,73 @@ fn parse_intr_api(tokens: &TokenStream) -> Option<(bool, bool)> {
     }
 }
 
+fn parse_lock_type(tokens: &TokenStream) -> Option<(String, bool)> {
+    let mut iter = tokens.iter();
+    let mut name = None;
+    let mut may_sleep = None;
+
+    while let Some(tree) = iter.next() {
+        let TokenTree::Token(
+            Token {
+                kind: TokenKind::Ident(sym, _),
+                ..
+            },
+            _,
+        ) = tree
+        else {
+            continue;
+        };
+
+        let key = sym.as_str();
+        let Some(TokenTree::Token(
+            Token {
+                kind: TokenKind::Eq,
+                ..
+            },
+            _,
+        )) = iter.next()
+        else {
+            continue;
+        };
+
+        match key {
+            "Name" => {
+                let Some(TokenTree::Token(
+                    Token {
+                        kind: TokenKind::Literal(lit),
+                        ..
+                    },
+                    _,
+                )) = iter.next()
+                else {
+                    return None;
+                };
+                name = Some(lit.symbol.as_str().trim_matches('"').to_string());
+            }
+            "MaySleep" => {
+                let Some(TokenTree::Token(
+                    Token {
+                        kind: TokenKind::Ident(val_sym, _),
+                        ..
+                    },
+                    _,
+                )) = iter.next()
+                else {
+                    return None;
+                };
+                may_sleep = match val_sym.as_str() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => return None,
+                };
+            }
+            _ => {}
+        }
+    }
+
+    name.map(|n| (n, may_sleep.unwrap_or(false)))
+}
+
 fn parse_lock_op(tokens: &TokenStream) -> Option<(usize, bool)> {
     let mut iter = tokens.iter();
     let mut lock_arg = None;
@@ -451,17 +524,18 @@ pub fn extract_locktag_item(did: DefId, attr: &Attribute) -> Option<LockTagItem>
                 _ => return None,
             };
             match path[1].as_str() {
-                "LockType" => {
-                    // Parse format Name = "SpinLock"
-                    let name = parse_name_value(&tokens);
-                    match name {
-                        Some(n) => Some(LockTagItem::LockType(did, n, attr.span.into())),
-                        None => {
-                            rap_warn!("Failed to parse LockType attribute for {:?}", did);
-                            None
-                        }
+                "LockType" => match parse_lock_type(&tokens) {
+                    Some((name, may_sleep)) => Some(LockTagItem::LockType(
+                        did,
+                        name,
+                        may_sleep,
+                        attr.span.into(),
+                    )),
+                    None => {
+                        rap_warn!("Failed to parse LockType attribute for {:?}", did);
+                        None
                     }
-                }
+                },
                 "LockGuardType" => {
                     // Parse format Name = "SpinLockGuard"
                     let name = parse_name_value(&tokens);

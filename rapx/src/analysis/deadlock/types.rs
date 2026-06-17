@@ -314,6 +314,9 @@ pub mod lock {
 
         /// Guard-returning APIs that still use the legacy fallback path.
         pub missing_lock_op_apis: HashSet<DefId>,
+
+        /// Lock instances whose underlying type is marked `MaySleep = true`.
+        pub sleeping_lock_instances: HashSet<LockInstance>,
     }
 
     impl ProgramLockInfo {
@@ -323,6 +326,7 @@ pub mod lock {
                 lockguard_instances: HashSet::new(),
                 lockmap: GlobalLockMap::new(),
                 missing_lock_op_apis: HashSet::new(),
+                sleeping_lock_instances: HashSet::new(),
             }
         }
     }

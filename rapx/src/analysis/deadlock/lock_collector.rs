@@ -496,6 +496,7 @@ impl<'tcx> LockMapBuilder<'tcx> {
                 });
                 roots
             }
+            Operand::RuntimeChecks(_) => HashSet::new(),
         }
     }
 
@@ -646,7 +647,7 @@ impl<'tcx> Visitor<'tcx> for LockMapBuilder<'tcx> {
                                 GuardIrqSemantics::Unchanged,
                             );
                         }
-                        Operand::Constant(..) => {}
+                        Operand::Constant(..) | Operand::RuntimeChecks(_) => {}
                     }
                 }
                 return;

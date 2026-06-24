@@ -24,7 +24,7 @@ pub fn deep_run() {
 }
 
 fn check_members(ws_metadata: &Metadata) {
-    // Force clean even if `RAP_CLEAN` is false, because rapx is in control of
+    // Force clean even if `RAPX_CLEAN` is false, because rapx is in control of
     // caches for all packages and there should be no cache.
     let ws_root = &ws_metadata.workspace_root;
     rap_trace!("cargo clean in workspace root {ws_root}");
@@ -66,7 +66,7 @@ fn workspaces(cargo_tomls: &[Utf8PathBuf]) -> Workspaces {
     for cargo_toml in cargo_tomls {
         let metadata = workspace(cargo_toml);
         let root = &metadata.workspace_root;
-        // 每个 member package 解析的 workspace_root 和 members 是一样的
+        // The workspace_root and members are the same for each member package
         if !map.contains_key(root) {
             map.insert(root.clone(), metadata);
         }

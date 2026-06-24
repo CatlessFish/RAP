@@ -6,7 +6,7 @@ pub mod lockset_analyzer;
 pub mod tag_parser;
 pub mod types;
 
-use crate::analysis::core::callgraph::default::{CallGraph, CallGraphAnalyzer};
+use crate::analysis::callgraph::default::{CallGraph, CallGraphAnalyzer};
 use crate::analysis::deadlock::deadlock_reporter::DeadlockReporter;
 use crate::analysis::deadlock::isr_analyzer::IsrAnalyzer;
 use crate::analysis::deadlock::ldg_constructor::LDGConstructor;

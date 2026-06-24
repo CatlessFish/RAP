@@ -1,20 +1,23 @@
 #![feature(rustc_private)]
-#![feature(box_patterns)]
-#![feature(macro_metavar_expr_concat)]
 
 #[macro_use]
 pub mod utils;
 pub mod analysis;
+pub mod check;
 pub mod cli;
+pub mod compat;
 pub mod def_id;
+pub mod graphs;
 pub mod help;
+pub mod helpers;
 pub mod preprocess;
-extern crate intervals;
+pub mod verify;
+
 extern crate rustc_abi;
 extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
-extern crate rustc_errors;
+
 extern crate rustc_hir;
 extern crate rustc_hir_pretty;
 extern crate rustc_index;
@@ -22,52 +25,50 @@ extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_metadata;
 extern crate rustc_middle;
+extern crate rustc_mir_dataflow;
 extern crate rustc_public;
 extern crate rustc_session;
 extern crate rustc_span;
-extern crate rustc_target;
+
 extern crate rustc_trait_selection;
-extern crate rustc_traits;
+
 extern crate rustc_type_ir;
 extern crate thin_vec;
+
 use crate::{
     analysis::{
-        core::alias_analysis::mfp::MfpAliasAnalyzer, deadlock::DeadlockDetector, scan::ScanAnalysis,
+        alias_analysis::mfp::MfpAliasAnalyzer, api_dependency, deadlock::DeadlockDetector,
+        scan::ScanAnalysis,
     },
-    cli::{AliasStrategyKind, AnalysisKind, Commands, ExtractKind, OptLevel, RapxArgs},
+    check::{opt::Opt, rcanary::rCanary, safedrop::SafeDrop},
+    cli::{AliasStrategyKind, AnalysisKind, CheckArgs, Commands, OptLevel, RapxArgs, VerifyArgs},
+    verify::{driver::VerifyRun, target::PrepareTargets},
 };
 use analysis::{
     Analysis,
-    core::{
-        alias_analysis::{AliasAnalysis, FnAliasMapWrapper, default::AliasAnalyzer},
-        api_dependency::ApiDependencyAnalyzer,
-        callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
-        dataflow::{
-            Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper, default::DataFlowAnalyzer,
-        },
-        ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
-        range_analysis::{
-            PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
-        },
-        ssa_transform::SSATrans,
+    alias_analysis::{AliasAnalysis, FnAliasMapWrapper, default::AliasAnalyzer},
+    api_dependency::ApiDependencyAnalyzer,
+    callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
+    dataflow::{Arg2RetMapWrapper, DataflowAnalysis, default::DataflowAnalyzer},
+    ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
+    path_analysis::{PathMapWrapper, default::PathAnalyzer},
+    range_analysis::{
+        PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
     },
-    extract::ExtractUnsafeApis,
-    opt::Opt,
-    rcanary::rCanary,
-    safedrop::SafeDrop,
-    senryx::{CheckLevel, SenryxCheck},
-    upg::{TargetCrate, UPGAnalysis},
-    utils::show_mir::ShowMir,
+    safetyflow_analysis::{SafetyFlowAnalysis, TargetCrate},
+    ssa_transform::SSATrans,
 };
+use helpers::show_mir::ShowMir;
 use rustc_ast::ast;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface::{self, Compiler};
 use rustc_middle::{ty::TyCtxt, util::Providers};
+#[cfg(not(rapx_rustc_ge_196))]
 use rustc_session::search_paths::PathKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub static RAP_DEFAULT_ARGS: &[&str] = &[
+pub static RAPX_DEFAULT_ARGS: &[&str] = &[
     "-Zalways-encode-mir",
     "-Zmir-opt-level=0",
     "-Zinline-mir-threshold=0",
@@ -110,7 +111,14 @@ impl Callbacks for RapCallback {
                 // HACK: rustc will emit "crate ... required to be available in rlib format, but
                 // was not found in this form" errors once we use `tcx.dependency_formats()` if
                 // there's no rlib provided, so setting a dummy path here to workaround those errors.
-                Arc::make_mut(&mut crate_source).rlib = Some((PathBuf::new(), PathKind::All));
+                #[cfg(rapx_rustc_ge_196)]
+                {
+                    Arc::make_mut(&mut crate_source).rlib = Some(PathBuf::new());
+                }
+                #[cfg(not(rapx_rustc_ge_196))]
+                {
+                    Arc::make_mut(&mut crate_source).rlib = Some((PathBuf::new(), PathKind::All));
+                }
                 crate_source
             };
         });
@@ -134,7 +142,6 @@ impl Callbacks for RapCallback {
     }
     fn after_analysis<'tcx>(&mut self, _compiler: &Compiler, tcx: TyCtxt<'tcx>) -> Compilation {
         rap_trace!("Execute after_analysis() of compiler callbacks");
-
         rustc_public::rustc_internal::run(tcx, || {
             def_id::init(tcx);
             if self.is_building_test_crate() {
@@ -146,8 +153,8 @@ impl Callbacks for RapCallback {
             }
         })
         .expect("Failed to run rustc_public.");
-        rap_trace!("analysis done");
 
+        rap_trace!("analysis done");
         Compilation::Continue
     }
 }
@@ -155,18 +162,11 @@ impl Callbacks for RapCallback {
 /// Start the analysis with the features enabled.
 pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
     match &callback.args.command {
-        &Commands::Check {
-            uaf,
-            mleak,
-            opt,
-            infer,
-            verify,
-            verify_std,
-        } => {
+        Commands::Check(CheckArgs { uaf, mleak, opt }) => {
             if uaf.is_some() {
                 SafeDrop::new(tcx).start();
             }
-            if mleak {
+            if *mleak {
                 let mut heap = OwnedHeapAnalyzer::new(tcx);
                 heap.run();
                 let adt_owner = heap.get_all_items();
@@ -179,29 +179,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     OptLevel::All => Opt::new(tcx, 2).start(),
                 }
             }
-            if infer {
-                let check_level = CheckLevel::Medium;
-                SenryxCheck::new(tcx, 2).start(check_level, false);
-            }
-            if verify {
-                let check_level = CheckLevel::Medium;
-                SenryxCheck::new(tcx, 2).start(check_level, true);
-            }
-
-            if verify_std {
-                SenryxCheck::new(tcx, 2).start_analyze_std_func();
-                // SenryxCheck::new(tcx, 2).generate_uig_by_def_id();
-            }
         }
-
-        Commands::Extract { kind } => match kind {
-            ExtractKind::UnsafeApis => {
-                ExtractUnsafeApis::new(tcx).run_local();
-            }
-            ExtractKind::StdUnsafeApis => {
-                ExtractUnsafeApis::new(tcx).run_std();
-            }
-        },
 
         Commands::Analyze { kind } => match kind {
             AnalysisKind::Alias { strategy } => {
@@ -219,22 +197,27 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 };
                 rap_info!("{}", FnAliasMapWrapper(alias));
             }
-            AnalysisKind::Adg => {
-                let mut analyzer = ApiDependencyAnalyzer::new(
-                    tcx,
-                    analysis::core::api_dependency::Config {
-                        pub_only: true,
-                        resolve_generic: true,
+            AnalysisKind::Adg(args) => {
+                let config = api_dependency::Config {
+                    resolve_generic: true,
+                    visit_config: api_dependency::VisitConfig {
+                        pub_only: !args.include_private,
+                        include_generic: true,
                         ignore_const_generic: true,
+                        include_unsafe: args.include_unsafe,
+                        include_drop: args.include_drop,
                     },
-                );
+                    max_generic_search_iteration: args.max_iteration,
+                    dump: args.dump.clone(),
+                };
+                let mut analyzer = ApiDependencyAnalyzer::new(tcx, config);
                 analyzer.run();
             }
-            AnalysisKind::Upg => {
-                UPGAnalysis::new(tcx).start(TargetCrate::Other);
+            &AnalysisKind::SafetyFlow { draw } => {
+                SafetyFlowAnalysis::new(tcx).with_draw(draw).start(TargetCrate::Other);
             }
-            AnalysisKind::UpgStd => {
-                UPGAnalysis::new(tcx).start(TargetCrate::Std);
+            &AnalysisKind::SafetyFlowStd { draw } => {
+                SafetyFlowAnalysis::new(tcx).with_draw(draw).start(TargetCrate::Std);
             }
             AnalysisKind::Callgraph => {
                 let mut analyzer = CallGraphAnalyzer::new(tcx);
@@ -248,18 +231,11 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     }
                 );
             }
-            AnalysisKind::Dataflow { debug } => {
-                if *debug {
-                    let mut analyzer = DataFlowAnalyzer::new(tcx, true);
-                    analyzer.run();
-                    let result = analyzer.get_all_dataflow();
-                    rap_info!("{}", DataFlowGraphMapWrapper(result));
-                } else {
-                    let mut analyzer = DataFlowAnalyzer::new(tcx, false);
-                    analyzer.run();
-                    let result = analyzer.get_all_arg2ret();
-                    rap_info!("{}", Arg2RetMapWrapper(result));
-                }
+            &AnalysisKind::Dataflow { debug, draw } => {
+                let mut analyzer = DataflowAnalyzer::new(tcx, debug).with_draw(draw);
+                analyzer.run();
+                let result = analyzer.get_all_arg2ret();
+                rap_info!("{}", Arg2RetMapWrapper(result));
             }
             AnalysisKind::OwnedHeap => {
                 let mut analyzer = OwnedHeapAnalyzer::new(tcx);
@@ -267,14 +243,20 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 let result = analyzer.get_all_items();
                 rap_info!("{}", OHAResultMapWrapper(result));
             }
+            AnalysisKind::Paths => {
+                let mut analyzer = PathAnalyzer::new(tcx, false);
+                analyzer.run();
+                let result = analyzer.get_all_paths();
+                rap_info!("{}", PathMapWrapper(result));
+            }
             AnalysisKind::Pathcond => {
                 let mut analyzer = RangeAnalyzer::<i64>::new(tcx, false);
                 analyzer.start_path_constraints_analysis();
                 let result = analyzer.get_all_path_constraints();
                 rap_info!("{}", PathConstraintMapWrapper(result));
             }
-            AnalysisKind::Range { debug } => {
-                let mut analyzer = RangeAnalyzer::<i64>::new(tcx, *debug);
+            &AnalysisKind::Range { debug } => {
+                let mut analyzer = RangeAnalyzer::<i64>::new(tcx, debug);
                 analyzer.run();
                 let result = analyzer.get_all_fn_ranges();
                 rap_info!("{}", RAResultMapWrapper(result));
@@ -300,5 +282,17 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     .run_with_tag_io(save_tags.as_deref(), load_tags.as_deref());
             }
         },
+
+        Commands::Verify(VerifyArgs {
+            prepare_targets,
+            allow_pathseg_repeat,
+            mode,
+        }) => {
+            if *prepare_targets {
+                PrepareTargets::new(tcx, *mode).run();
+            } else {
+                VerifyRun::new(tcx, *allow_pathseg_repeat, *mode).run();
+            }
+        }
     }
 }

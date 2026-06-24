@@ -1,4 +1,10 @@
+mod analyze;
+mod check;
+mod verify;
+pub use analyze::*;
+pub use check::*;
 use clap::{Args, Subcommand, ValueEnum};
+pub use verify::*;
 
 #[derive(Args, Debug, Clone)]
 pub struct RapxArgs {
@@ -8,13 +14,6 @@ pub struct RapxArgs {
     pub timeout: Option<u64>,
     #[arg(long, help = "specify the tested package in the workspace")]
     pub test_crate: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum OptLevel {
-    Report,
-    Default,
-    All,
 }
 
 // NOTE: docstring is automatically used to generate help messages,
@@ -29,118 +28,23 @@ pub enum Commands {
     },
     /// check potential vulnerabilities in the crate,
     /// e.g., use-after-free, memory leak
-    Check {
-        /// detect use-after-free/double-free
-        #[arg(
-            short = 'f',
-            num_args=0..=1,
-            default_missing_value = "1",
-            long,
-        )]
-        uaf: Option<usize>,
-
-        /// detect memory leakage
-        #[arg(short = 'm', long)]
-        mleak: bool,
-
-        /// automatically detect code optimization chances
-        #[arg(short = 'o', long, default_missing_value = "default")]
-        opt: Option<OptLevel>,
-
-        /// (under development) infer the safety properties required by unsafe APIs.
-        #[arg(long)]
-        infer: bool,
-
-        /// (under development) verify if the safety requirements of unsafe API are satisfied.
-        #[arg(long)]
-        verify: bool,
-
-        /// (under development) verify if the safety requirements of unsafe API are satisfied.
-        #[arg(long)]
-        verify_std: bool,
-    },
-    /// extract unsafe APIs and output a JSON document
-    #[command(arg_required_else_help = true)]
-    Extract {
-        #[command(subcommand)]
-        kind: ExtractKind,
-    },
+    Check(CheckArgs),
+    /// verify annotated functions in the crate, e.g., identify #[rapx::verify] targets
+    Verify(VerifyArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum AliasStrategyKind {
-    /// meet-over-paths (default)
-    Mop,
-    /// maximum-fixed-point
-    Mfp,
-}
-
-// use command string to automatically generate help messages
-#[derive(Debug, Clone, Subcommand)]
-pub enum AnalysisKind {
-    /// perform alias analysis (meet-over-paths by default)
-    Alias {
-        /// specify the alias analysis strategy
-        #[arg(short, long, default_value = "mop")]
-        strategy: AliasStrategyKind,
-    },
-    /// generate API dependency graphs
-    Adg,
-    /// generate unsafety propagation graphs for each module
-    Upg,
-    /// generate unsafety propagation graphs for each module of the Rust standard library
-    UpgStd,
-    /// generate callgraphs
-    Callgraph,
-    /// generate dataflow graphs
-    Dataflow {
-        /// print debug information during dataflow analysis
-        #[arg(short, long)]
-        debug: bool,
-    },
-    /// analyze if the type holds a piece of memory on heap
-    OwnedHeap,
-    /// extract path constraints
-    Pathcond,
-    /// perform range analysis
-    Range {
-        /// print debug information during range analysis
-        #[arg(short, long)]
-        debug: bool,
-    },
-    /// print basic information of the crate, e.g., the number of APIs
-    Scan,
-    /// print the SSA form of the crate
-    Ssa,
-    /// print the MIR of the crate
-    Mir,
-    /// print the MIR of the crate in dot format
-    DotMir,
-    /// scan for potential deadlocks
-    Deadlock {
-        /// (optional) Save analyzed tags to JSON file
-        #[arg(long)]
-        save_tags: Option<String>,
-        /// (optional) Load tags from JSON file
-        #[arg(long)]
-        load_tags: Option<String>,
-    },
-}
-
-// use command string to automatically generate help messages
-#[derive(Debug, Clone, Copy, Subcommand)]
-pub enum ExtractKind {
-    /// output all `pub unsafe` APIs of the current crate as JSON
-    UnsafeApis,
-    /// output all `pub unsafe` APIs of the Rust standard library as JSON
-    StdUnsafeApis,
+pub enum OptLevel {
+    Report,
+    Default,
+    All,
 }
 
 impl RapxArgs {
     pub fn init_env(&self) {
-        let Commands::Check {
+        let Commands::Check(CheckArgs {
             uaf: Some(level), ..
-        } = self.command
+        }) = &self.command
         else {
             return;
         };

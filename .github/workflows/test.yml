@@ -1,4 +1,4 @@
-name: RAPx-booting and testing
+name: RAPx CI
 
 on:
   push:
@@ -6,23 +6,50 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RAP_RECURSIVE: deep
 
 jobs:
-  build:
-
+  latest:
     runs-on: ubuntu-22.04
-
     steps:
     - uses: actions/checkout@v4
-
-    - name: Build RAPx 
+    - name: Setup toolchain
+      run: |
+        rustup toolchain install nightly --profile minimal
+        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly
+        rustup override set nightly
+        rustc --version
+    - name: Build
       run: ./install.sh
-
-    - name: Running Cargo Test
+    - name: Test
       run: cd rapx && cargo test
-      
-    - run: sudo apt install colorized-logs -y # Insall ansi2txt
 
-    - name: Running Other Test Cases 
-      run: cd ./rapx/tests/others && ./batch.sh -F -M -O
+  asterinas:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup toolchain
+      run: |
+        rustup toolchain install nightly-2026-04-03 --profile minimal
+        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly-2026-04-03
+        rustup override set nightly-2026-04-03
+        rustc --version
+    - name: Build
+      run: ./install.sh
+    - name: Test
+      run: cd rapx && cargo test
+
+  verify-std:
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup toolchain
+      run: |
+        rustup toolchain install nightly-2025-10-09 --profile minimal
+        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly-2025-10-09
+        rustup override set nightly-2025-10-09
+        rustc --version
+    - name: Build
+      run: ./install.sh
+    - name: Test
+      run: cd rapx && cargo test

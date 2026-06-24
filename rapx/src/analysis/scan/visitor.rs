@@ -27,7 +27,7 @@ fn is_api_public(fn_def_id: impl Into<DefId>, tcx: TyCtxt<'_>) -> bool {
         tcx.effective_visibilities(()).effective_vis(local_id)
     );
     tcx.effective_visibilities(()).is_directly_public(local_id)
-    // || tcx.effective_visibilities(()).is_exported(local_id)
+        || tcx.effective_visibilities(()).is_exported(local_id)
 }
 
 impl<'tcx> FnVisitor<'tcx> {
@@ -49,19 +49,45 @@ impl<'tcx> FnVisitor<'tcx> {
         id: LocalDefId,
     ) {
         let fn_did = id.to_def_id();
+        rap_debug!("API path: {}", self.tcx.def_path_str(fn_did));
+        #[cfg(not(rapx_rustc_ge_198))]
+        #[cfg(not(rapx_rustc_ge_198))]
+        rap_debug!(
+            "fn_sig: {}",
+            self.tcx.type_of(fn_did).instantiate_identity()
+        );
+        #[cfg(rapx_rustc_ge_198)]
+        rap_debug!(
+            "fn_sig: {}",
+            self.tcx.type_of(fn_did).instantiate_identity().skip_norm_wip()
+        );
+        rap_debug!(
+            "visibility: {:?}",
+            self.tcx
+                .effective_visibilities(())
+                .effective_vis(fn_did.as_local().unwrap())
+                .unwrap()
+        );
 
         if !is_api_public(fn_did, self.tcx) {
+            rap_debug!("skip for not public API");
             return;
         }
-        rap_debug!("API path: {}", self.tcx.def_path_str(fn_did));
-        rap_debug!("type: {}", self.tcx.type_of(fn_did).instantiate_identity());
+
         let is_generic = self
             .tcx
             .generics_of(fn_did)
             .requires_monomorphization(self.tcx);
         let fn_sig = self.tcx.fn_sig(fn_did);
+        #[cfg(not(rapx_rustc_ge_198))]
         rap_debug!("fn_sig: {}", fn_sig.instantiate_identity());
-        for input in fn_sig.instantiate_identity().inputs_and_output().iter() {
+        #[cfg(rapx_rustc_ge_198)]
+        rap_debug!("fn_sig: {:?}", fn_sig);
+        let inst_fn_sig = fn_sig.instantiate_identity();
+        #[cfg(rapx_rustc_ge_198)]
+        let inst_fn_sig = inst_fn_sig.skip_norm_wip();
+        let inputs = inst_fn_sig.inputs_and_output();
+        for input in inputs.iter() {
             rap_debug!("param: {:?}", input);
             let input_ty = input.skip_binder();
             if let TyKind::Ref(r, ty, _) = input.skip_binder().kind() {
@@ -78,11 +104,14 @@ impl<'tcx> FnVisitor<'tcx> {
             }
         }
 
+        #[cfg(not(rapx_rustc_ge_198))]
         rap_debug!("type(debug): {:?}", self.tcx.type_of(fn_did));
+        #[cfg(rapx_rustc_ge_198)]
+        rap_debug!("type(debug): {:?}", self.tcx.type_of(fn_did).instantiate_identity().skip_norm_wip());
         rap_debug!("fn_sig(debug): {:?}", fn_sig);
         let late_fn_sig = self
             .tcx
-            .liberate_late_bound_regions(fn_did, fn_sig.instantiate_identity());
+            .liberate_late_bound_regions(fn_did, inst_fn_sig);
         rap_debug!("late_fn_sig: {:?}", late_fn_sig);
 
         if is_generic {

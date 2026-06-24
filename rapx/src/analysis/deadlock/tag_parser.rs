@@ -6,7 +6,7 @@ use rustc_span::Span;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::analysis::utils::def_path::def_path_def_ids;
+use crate::helpers::def_path::def_path_def_ids;
 
 pub struct TagParser<'tcx> {
     tcx: TyCtxt<'tcx>,

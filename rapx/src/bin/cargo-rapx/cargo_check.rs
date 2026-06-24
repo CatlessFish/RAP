@@ -7,7 +7,7 @@ use wait_timeout::ChildExt;
 mod workspace;
 
 pub fn run() {
-    match env::var("RAP_RECURSIVE")
+    match env::var("RAPX_RECURSIVE")
         .ok()
         .map(|s| s.trim().to_ascii_lowercase())
         .as_deref()
@@ -22,7 +22,7 @@ pub fn run() {
 }
 
 fn cargo_check(dir: &Utf8Path) {
-    // always clean before check due to outdated except `RAP_CLEAN` is false
+    // always clean before check due to outdated except `RAPX_CLEAN` is false
     cargo_clean(dir, args::rap_clean());
 
     rap_trace!("cargo check in package folder {dir}");
@@ -40,7 +40,7 @@ fn cargo_check(dir: &Utf8Path) {
     cmd.args(cargo_args);
 
     // arguments are stored in env variable and read by rapx
-    cmd.env("RAPFLAGS", rap_args.join(" "));
+    cmd.env("RAPXFLAGS", rap_args.join(" "));
 
     // Invoke actual cargo for the job, but with different flags.
     let cargo_rap_path = args::current_exe_path();
@@ -77,13 +77,31 @@ fn cargo_check(dir: &Utf8Path) {
 fn cargo_clean(dir: &Utf8Path, really: bool) {
     if really {
         rap_trace!("cargo clean in package folder {dir}");
-        if let Err(err) = Command::new("cargo")
+        let out = Command::new("cargo")
             .arg("clean")
-            .arg("--workspace") // use --workspace to clean all members of the workspace, which may be more thorough but also more time-consuming to rebuild
+            .arg("--workspace")
             .current_dir(dir)
-            .output()
-        {
-            rap_error_and_exit(format!("`cargo clean` exits unexpectedly:\n{err}"));
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {}
+            _ => {
+                let out = Command::new("cargo")
+                    .arg("clean")
+                    .current_dir(dir)
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {}
+                    Ok(o) => {
+                        rap_debug!(
+                            "cargo clean non-zero exit: {}",
+                            String::from_utf8_lossy(&o.stderr)
+                        );
+                    }
+                    Err(err) => {
+                        rap_error_and_exit(format!("`cargo clean` exits unexpectedly:\n{err}"));
+                    }
+                }
+            }
         }
     }
 }

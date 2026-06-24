@@ -9,7 +9,7 @@ extern crate rustc_mir_dataflow;
 use rustc_mir_dataflow::fmt::DebugWithContext;
 use rustc_mir_dataflow::{Analysis, JoinSemiLattice};
 
-use crate::analysis::core::callgraph::default::CallGraph;
+use crate::analysis::callgraph::default::CallGraph;
 use crate::analysis::deadlock::tag_parser::LockTagItem;
 use crate::analysis::deadlock::types::{interrupt::*, lock::*};
 

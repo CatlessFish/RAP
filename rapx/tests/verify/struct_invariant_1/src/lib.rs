@@ -1,0 +1,51 @@
+#![feature(register_tool)]
+#![register_tool(rapx)]
+#![allow(unused)]
+
+#[rapx::invariant(Align(ptr, T))]
+#[rapx::invariant(InBound(ptr, T, len))]
+#[rapx::invariant(Init(ptr, T, len))]
+struct Wrapper<T> {
+    ptr: *const T,
+    len: usize,
+}
+
+impl<T> Wrapper<T> {
+    #[rapx::verify]
+    fn unsound_new(ptr: *const T, len: usize) -> Self {
+        Self { ptr, len }
+    }
+
+    #[rapx::verify]
+    fn unsound_set_len(&mut self, len: usize) {
+        self.len = len;
+    }
+
+    #[rapx::verify]
+    fn sound_read(&self) -> Option<u32> {
+        let ptr = self.ptr;
+
+        if self.len == 0 {
+            return None;
+        }
+
+        if (ptr as usize) % std::mem::align_of::<u32>() == 0 {
+            unsafe {
+                let p = ptr as *const u32;
+                Some(p.read())
+            }
+        } else {
+            None
+        }
+    }
+
+    #[rapx::verify]
+    fn unsound_read(&self) -> u32 {
+        let ptr = self.ptr;
+
+        unsafe {
+            let p = ptr as *const u32;
+            p.read()
+        }
+    }
+}

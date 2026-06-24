@@ -1,5 +1,7 @@
 use crate::analysis::Analysis;
-use crate::analysis::safetyflow_analysis::root::{function_has_struct_invariant, hir_contains_unsafe};
+use crate::analysis::safetyflow_analysis::root::{
+    function_has_struct_invariant, hir_contains_unsafe,
+};
 use crate::cli::VerifyMode;
 use crate::helpers::fn_info::{get_cons, get_ptr_deref_dummy_def_id};
 use crate::helpers::mir_scan::collect_raw_ptr_deref_info;
@@ -19,9 +21,7 @@ use syn::Expr;
 use super::{
     attribute::assets_parser::*,
     attribute::attr_parser::parse_rapx_attr,
-    contract::{
-        ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
-    },
+    contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
     helpers::{Callsite, collect_return_block_indices, collect_unsafe_callsites},
     path::PathExtractor,
 };
@@ -286,7 +286,8 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                     && function_target.raw_ptr_deref_checks.is_empty()
                     && function_target.struct_invariants.is_empty()
                 {
-                    let root = crate::analysis::safetyflow_analysis::root::scan_mir(self.tcx, def_id);
+                    let root =
+                        crate::analysis::safetyflow_analysis::root::scan_mir(self.tcx, def_id);
                     if root.is_none() {
                         return;
                     }
@@ -558,7 +559,9 @@ fn normalize_json_contract_arg(arg: &str) -> String {
 
 fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
     let path = attr.path();
-    path.len() >= 2 && path[path.len() - 2].as_str() == "rapx" && path[path.len() - 1].as_str() == name
+    path.len() >= 2
+        && path[path.len() - 2].as_str() == "rapx"
+        && path[path.len() - 1].as_str() == name
 }
 
 /// Collects properties from `#[rapx::requires(...)]` attributes.
@@ -643,7 +646,9 @@ fn get_struct_invariants_from_annotation<'tcx>(
         tcx,
         {
             #[allow(deprecated)]
-            { tcx.get_all_attrs(struct_def_id) }
+            {
+                tcx.get_all_attrs(struct_def_id)
+            }
         },
         context_def_id,
         "invariant",
@@ -652,7 +657,9 @@ fn get_struct_invariants_from_annotation<'tcx>(
         tcx,
         {
             #[allow(deprecated)]
-            { tcx.get_all_attrs(struct_def_id) }
+            {
+                tcx.get_all_attrs(struct_def_id)
+            }
         },
         context_def_id,
         "invariant",

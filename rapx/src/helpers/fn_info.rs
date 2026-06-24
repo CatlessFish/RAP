@@ -214,8 +214,7 @@ pub fn has_mut_self_param(tcx: TyCtxt, def_id: DefId) -> bool {
                     let body = tcx.optimized_mir(def_id);
                     let fst_arg = body.local_decls[Local::from_usize(1)].clone();
                     let ty = fst_arg.ty;
-                    let is_mut_ref =
-                        matches!(ty.kind(), ty::Ref(_, _, Mutability::Mut));
+                    let is_mut_ref = matches!(ty.kind(), ty::Ref(_, _, Mutability::Mut));
                     return fst_arg.mutability.is_mut() || is_mut_ref;
                 }
             }

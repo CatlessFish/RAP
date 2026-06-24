@@ -290,7 +290,7 @@ fn statement_keep_reason(statement: &rustc_middle::mir::Statement<'_>) -> KeepRe
                 | rustc_middle::mir::Rvalue::BinaryOp(_, _) => KeepReason::PointerFlow,
                 _ => KeepReason::Definition,
             }
-        },
+        }
         StatementKind::StorageDead(_) => KeepReason::Invalidation,
         _ => KeepReason::Definition,
     }

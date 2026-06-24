@@ -1244,11 +1244,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         })() else {
                             continue;
                         };
-                        self.assert_place_non_zero(
-                            solver,
-                            &target,
-                            "caller-contract",
-                        );
+                        self.assert_place_non_zero(solver, &target, "caller-contract");
                     }
                     _ => {}
                 },

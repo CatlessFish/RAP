@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use crate::compat::FxHashMap;
+use crate::compat::Spanned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
@@ -16,7 +17,6 @@ use rustc_middle::{
     },
     ty::{Ty, TyCtxt, TyKind},
 };
-use crate::compat::Spanned;
 
 use super::{
     call_summary::{self, CallEffect, CallEffectSummary},
@@ -232,7 +232,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     Box::new(value_from_operand(lhs)),
                     Box::new(value_from_operand(rhs)),
                 )
-            },
+            }
             #[cfg(all(rapx_rustc_ge_193, not(rapx_rustc_ge_196)))]
             Rvalue::NullaryOp(op) => AbstractValue::Nullary(format!("{op:?}")),
             #[cfg(all(not(rapx_rustc_ge_193), not(rapx_rustc_ge_196)))]

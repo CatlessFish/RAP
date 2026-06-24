@@ -1,8 +1,8 @@
+use crate::compat::{FxHashMap, FxHashSet};
 use crate::graphs::{
     cfg::{CfgBlock, ControlFlowGraph},
     scc::{Scc, SccInfo},
 };
-use crate::compat::{FxHashMap, FxHashSet};
 use rustc_middle::{
     mir::{
         BasicBlock, Local, Operand, Rvalue, StatementKind, SwitchTargets, Terminator,
@@ -143,7 +143,7 @@ impl<'tcx> PathGraph<'tcx> {
                     replace: _,
                     drop: _,
                     #[cfg(not(rapx_rustc_ge_198))]
-                    async_fut: _,
+                        async_fut: _,
                 } => {
                     cfg_block.add_next(target.as_usize());
                     if let UnwindAction::Cleanup(target) = unwind {
@@ -749,9 +749,7 @@ impl<'tcx> PathGraph<'tcx> {
         if current >= self.cfg.blocks.len() {
             return;
         }
-        if depth > WHOLE_CFG_PATH_DEPTH_LIMIT
-            || all_paths.len() >= WHOLE_CFG_PATH_LIMIT
-        {
+        if depth > WHOLE_CFG_PATH_DEPTH_LIMIT || all_paths.len() >= WHOLE_CFG_PATH_LIMIT {
             return;
         }
 

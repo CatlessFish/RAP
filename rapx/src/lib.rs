@@ -1,4 +1,5 @@
 #![feature(rustc_private)]
+#![feature(box_patterns)]
 
 #[macro_use]
 pub mod utils;

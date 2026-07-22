@@ -1,7 +1,6 @@
-use petgraph::graph::{EdgeIndex, NodeIndex};
 use rustc_middle::ty::TyCtxt;
-use std::collections::HashSet;
 
+use crate::analysis::deadlock::cycle_detector::detect_cycles;
 use crate::analysis::deadlock::types::*;
 
 pub struct DeadlockReporter<'tcx, 'a> {
@@ -15,44 +14,114 @@ impl<'tcx, 'a> DeadlockReporter<'tcx, 'a> {
     }
 
     pub fn run(&mut self) {
-        // let cycles = tarjan_scc(&self.graph.graph);
-        // for cycle in cycles {
-        //     rap_info!("Possible Deadlock Cycle: {:?}", cycle);
+        let limits = CycleDetectionLimits::default();
+        let cycles = detect_cycles(&self.graph.graph, &limits);
 
-        //     // TODO: analyze all cycles
-        // }
-        let self_cycle_nodes = self_cycle_node(self.graph);
-        rap_info!("Found {} self-cycle nodes", self_cycle_nodes.len());
-        for (node, edge) in self_cycle_nodes {
+        let node_count = self.graph.graph.node_count();
+        let edge_count = self.graph.graph.edge_count();
+        rap_info!(
+            "LDG: {} lock(s), {} dependency edge(s)",
+            node_count,
+            edge_count
+        );
+
+        if cycles.is_empty() {
+            rap_info!("No deadlock cycles detected.");
+        } else {
+            // Group cycles: self-cycles first, then multi-node cycles
+            let (self_cycles, multi_cycles): (Vec<_>, Vec<_>) = cycles
+                .iter()
+                .partition(|c| c.nodes.len() == 1 && c.edges.len() == 1);
+
+            let self_count = self_cycles.len();
+            let multi_count = multi_cycles.len();
+
             rap_info!(
-                "Possible Deadlock at: {}\n\tFirst acquired at {:?}\n\tthen aquired at {:?}\n\ttype {:?}",
-                self.graph.graph[node],
-                self.graph.graph[edge].old_lock_site.site,
-                self.graph.graph[edge].new_lock_site.site,
-                self.graph.graph[edge].edge_type,
+                "Found {} self-cycle(s) and {} multi-node cycle(s).",
+                self_count,
+                multi_count
             );
-            // rap_info!("Possible Deadlock at {:?}", self.graph.graph[node]);
-            // for edge in self.graph.graph.edges(node) {
-            //     rap_info!("{}", edge.weight());
-            // }
+
+            // Report self-cycles
+            for cycle in &self_cycles {
+                let node = cycle.nodes[0];
+                let edge = cycle.edges[0];
+                let edge_weight = &self.graph.graph[edge];
+                rap_info!(
+                    "Self-cycle deadlock at: {}\n  first acquired: {:?}\n  then acquired: {:?}\n  type: {}",
+                    self.graph.graph[node],
+                    edge_weight.old_lock_site.site,
+                    edge_weight.new_lock_site.site,
+                    cycle.kind,
+                );
+            }
+
+            // Report multi-node cycles
+            for (idx, cycle) in multi_cycles.iter().enumerate() {
+                report_multi_cycle(idx, cycle, self.graph);
+            }
+
+            // Summary
+            let pure_call = cycles
+                .iter()
+                .filter(|c| c.kind == CycleKind::PureCall)
+                .count();
+            let pure_intr = cycles
+                .iter()
+                .filter(|c| c.kind == CycleKind::PureInterrupt)
+                .count();
+            let mixed = cycles.iter().filter(|c| c.kind == CycleKind::Mixed).count();
+            rap_info!(
+                "Deadlock summary: {} PureCall, {} PureInterrupt, {} Mixed",
+                pure_call,
+                pure_intr,
+                mixed
+            );
         }
     }
 
     pub fn print_result(&self) {}
 }
 
-fn self_cycle_node(graph: &LockDependencyGraph) -> HashSet<(NodeIndex, EdgeIndex)> {
-    let mut result: HashSet<(NodeIndex, EdgeIndex)> = HashSet::new();
-    for edge_idx in graph.graph.edge_indices() {
-        if let LockDependencyEdgeType::Call(_) = graph.graph[edge_idx].edge_type {
-            // Temporarily only look for interrupt self cycle
-            continue;
-        }
-        if let Some((start_node, end_node)) = graph.graph.edge_endpoints(edge_idx) {
-            if start_node == end_node {
-                result.insert((start_node, edge_idx));
-            }
+fn report_multi_cycle(idx: usize, cycle: &DeadlockCycle, graph: &LockDependencyGraph) {
+    let n = cycle.nodes.len();
+    let mut names: Vec<String> = cycle
+        .nodes
+        .iter()
+        .map(|&n| format!("{}", graph.graph[n]))
+        .collect();
+
+    // Rotate to start with lexicographically smallest name for canonical output
+    if let Some(min_pos) = names
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, name)| name.as_str())
+        .map(|(i, _)| i)
+    {
+        if min_pos != 0 {
+            names.rotate_left(min_pos);
         }
     }
-    result
+
+    rap_info!(
+        "Multi-node cycle #{} ({}): [{}]",
+        idx + 1,
+        cycle.kind,
+        names.join(" -> ")
+    );
+
+    for i in 0..n {
+        let edge = &graph.graph[cycle.edges[i]];
+        let from_node = &graph.graph[cycle.nodes[i]];
+        let to_node = &graph.graph[cycle.nodes[(i + 1) % n]];
+        let kind_str = match edge.edge_type {
+            LockDependencyEdgeType::Call(ref site) => {
+                format!("Call @ {:?}", site.caller_def_id)
+            }
+            LockDependencyEdgeType::Interrupt(ref site) => {
+                format!("Interrupt @ {:?}", site.caller_def_id)
+            }
+        };
+        rap_info!("  {} --[{}]--> {}", from_node, kind_str, to_node);
+    }
 }

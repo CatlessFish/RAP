@@ -109,6 +109,7 @@ const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
 const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
 const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
 const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
+const ANALYZE_DEADLOCK_CMD: &[&str] = &["analyze", "deadlock"];
 const VERIFY_CMD: &[&str] = &["verify"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--allow-pathseg-repeat", "1"];
 const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--allow-pathseg-repeat", "2"];
@@ -1136,4 +1137,41 @@ fn adg_simple_graph() {
     let graph_str = std::fs::read_to_string(project_path("adg/simple-graph").join("api_graph.yml"))
         .expect("read api_graph.yml fail");
     assert_snapshot!(graph_str);
+}
+
+// ================ Deadlock Detection Tests =====================
+
+#[test]
+fn deadlock_interrupt_self_cycle() {
+    // Case 1: Interrupt self-cycle — ISR and normal context both acquire the same lock.
+    // Mirrors the classic asterinas serial-port deadlock pattern.
+    let output = run_with_args("deadlock/interrupt_self_cycle", ANALYZE_DEADLOCK_CMD);
+    assert_contain(&output, "Found 2 self-cycle(s) and 0 multi-node cycle(s)");
+    assert_contain(&output, "Self-cycle deadlock at: SERIAL_PORT");
+    assert_contain(&output, "2 PureInterrupt");
+}
+
+#[test]
+fn deadlock_abba() {
+    // Case 2: ABBA deadlock — pure normal-edge cycle (no ISR/IRQ involvement).
+    // Two threads acquire LockA and LockB in opposite order, forming A→B→A cycle.
+    let output = run_with_args("deadlock/abba", ANALYZE_DEADLOCK_CMD);
+    assert_contain(&output, "Found 0 self-cycle(s) and 1 multi-node cycle(s)");
+    assert_contain(&output, "Multi-node cycle #1 (PureCall): [A -> B]");
+    assert_contain(&output, "1 PureCall");
+}
+
+#[test]
+fn deadlock_mixed_cycle() {
+    // Case 3: Mixed interrupt + normal edge cycle.
+    // LockB is acquired in both ISR and normal context (interrupt self-cycle),
+    // while LockA and LockB form a normal ABBA pattern.
+    let output = run_with_args("deadlock/mixed_cycle", ANALYZE_DEADLOCK_CMD);
+    assert_contain(
+        &output,
+        "Tags found: LockType = 2, LockGuardType = 2, LockOp = 2, IntrApi = 2, IsrEntry = 1",
+    );
+    assert_contain(&output, "Self-cycle deadlock at: B");
+    assert_contain(&output, "Multi-node cycle #1 (PureCall): [A -> B]");
+    assert_contain(&output, "1 PureCall, 3 PureInterrupt");
 }

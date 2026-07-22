@@ -53,7 +53,7 @@ struct LockGuardInstanceCollector<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     func_def_id: DefId,
     parsed_tags: &'a [LockTagItem],
-    lockguard_instances: HashSet<(Local, LockGuardType)>,
+    lockguard_instances: HashSet<Local>,
 }
 
 impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
@@ -71,30 +71,29 @@ impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
         self.visit_body(body);
     }
 
-    fn lockguard_type_from(&self, local_type: Ty<'tcx>) -> Option<LockGuardType> {
+    fn is_known_lockguard_type(&self, local_type: Ty<'tcx>) -> bool {
         if let TyKind::Adt(adt_def, _generics) = local_type.kind() {
             if !adt_def.is_struct() {
-                return None;
+                return false;
             }
             for tag in self.parsed_tags.iter() {
                 if let LockTagItem::LockGuardType(def_id, _name, _) = tag {
                     if adt_def.did() == *def_id {
-                        return Some(LockGuardType::Default);
+                        return true;
                     }
                 }
             }
         }
-        None
+        false
     }
 
     pub fn collect(&mut self) -> HashSet<LockGuardInstance> {
         self.run();
         self.lockguard_instances
             .iter()
-            .map(|(local, ty)| LockGuardInstance {
+            .map(|local| LockGuardInstance {
                 func_def_id: self.func_def_id,
                 local: *local,
-                guard_type: ty.clone(),
             })
             .collect()
     }
@@ -102,8 +101,8 @@ impl<'tcx, 'a> LockGuardInstanceCollector<'tcx, 'a> {
 
 impl<'tcx, 'a> Visitor<'tcx> for LockGuardInstanceCollector<'tcx, 'a> {
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
-        if let Some(guard_type) = self.lockguard_type_from(local_decl.ty) {
-            self.lockguard_instances.insert((local, guard_type));
+        if self.is_known_lockguard_type(local_decl.ty) {
+            self.lockguard_instances.insert(local);
         }
         self.super_local_decl(local, local_decl);
     }

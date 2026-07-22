@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Display, Formatter};
 
 use petgraph::graph::DiGraph;
+use petgraph::graph::EdgeIndex;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
@@ -82,25 +83,11 @@ pub mod lock {
         }
     }
 
-    /// LockGuardType with its behavior
-    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-    pub enum LockGuardType {
-        /// A SpinLock which disables local irq
-        SpinLockLocalDisabled,
-
-        /// A SpinLock which does not disable local irq
-        SpinLockPreemptDisabled,
-
-        /// By default a guard does not disable local irq
-        Default,
-    }
-
-    /// A `LockGuardInstance` is a `Local` inside a function, with LockGuard type
+    /// A `LockGuardInstance` is a `Local` inside a function that holds a lock guard.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct LockGuardInstance {
         pub func_def_id: DefId,
         pub local: Local,
-        pub guard_type: LockGuardType,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -560,6 +547,56 @@ impl LockDependencyGraph {
             return idx;
         } else {
             self.graph.add_node(lock.clone())
+        }
+    }
+}
+
+/// Classification of a deadlock cycle based on edge composition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CycleKind {
+    /// All edges are `Call` — classic lock ordering deadlock (ABBA).
+    PureCall,
+    /// All edges are `Interrupt` — ISR re-entrancy deadlock.
+    PureInterrupt,
+    /// Both Call and Interrupt edges — mixed-context deadlock.
+    Mixed,
+}
+
+impl std::fmt::Display for CycleKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CycleKind::PureCall => write!(f, "PureCall"),
+            CycleKind::PureInterrupt => write!(f, "PureInterrupt"),
+            CycleKind::Mixed => write!(f, "Mixed"),
+        }
+    }
+}
+
+/// A single elementary cycle in the lock dependency graph.
+/// `edges[i]` is the edge from `nodes[i]` to `nodes[(i+1) % len]`.
+#[derive(Debug, Clone)]
+pub struct DeadlockCycle {
+    pub kind: CycleKind,
+    pub nodes: Vec<NodeIndex>,
+    pub edges: Vec<EdgeIndex>,
+}
+
+/// Safety limits for cycle detection.
+pub struct CycleDetectionLimits {
+    /// Maximum graph node count before skipping enumeration entirely.
+    pub max_graph_nodes: usize,
+    /// Maximum SCC size to run full Johnson enumeration.
+    pub max_scc_size_for_enumeration: usize,
+    /// Maximum total cycles to report before truncation.
+    pub max_total_cycles: usize,
+}
+
+impl Default for CycleDetectionLimits {
+    fn default() -> Self {
+        Self {
+            max_graph_nodes: 1000,
+            max_scc_size_for_enumeration: 10,
+            max_total_cycles: 1000,
         }
     }
 }
